@@ -113,10 +113,7 @@ class TestBacktestNode:
         with pytest.raises(InvalidConfiguration) as exc_info:
             BacktestNode(configs=[run_config])
 
-        assert (
-            str(exc_info.value)
-            == f"No order book data available for SIM with book type {book_type}"
-        )
+        assert str(exc_info.value) == f"No order book data available for SIM with book type {book_type}"
 
     def test_run(self):
         # Arrange

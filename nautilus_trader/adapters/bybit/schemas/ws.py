@@ -316,26 +316,10 @@ class BybitWsOrderbookDepth(msgspec.Struct):
 
         return QuoteTick(
             instrument_id=instrument_id,
-            bid_price=(
-                Price(float(top_bid_price), price_precision)
-                if top_bid_price
-                else last_quote.bid_price
-            ),
-            ask_price=(
-                Price(float(top_ask_price), price_precision)
-                if top_ask_price
-                else last_quote.ask_price
-            ),
-            bid_size=(
-                Quantity(float(top_bid_size), size_precision)
-                if top_bid_size
-                else last_quote.bid_size
-            ),
-            ask_size=(
-                Quantity(float(top_ask_size), size_precision)
-                if top_ask_size
-                else last_quote.ask_size
-            ),
+            bid_price=(Price(float(top_bid_price), price_precision) if top_bid_price else last_quote.bid_price),
+            ask_price=(Price(float(top_ask_price), price_precision) if top_ask_price else last_quote.ask_price),
+            bid_size=(Quantity(float(top_bid_size), size_precision) if top_bid_size else last_quote.bid_size),
+            ask_size=(Quantity(float(top_ask_size), size_precision) if top_ask_size else last_quote.ask_size),
             ts_event=ts_event,
             ts_init=ts_init,
         )

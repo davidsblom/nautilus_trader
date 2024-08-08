@@ -67,9 +67,7 @@ async def test_sandbox_get_instruments(client: BybitHttpClient) -> None:
     instruments_spot = await instruments_spot_endpoint.get(
         BybitInstrumentsInfoGetParams(category=BybitProductType.SPOT),
     )
-    result_list_spot = [
-        item for item in instruments_spot.result.list if item.symbol in ["BTCUSDT", "ETHUSDT"]
-    ]
+    result_list_spot = [item for item in instruments_spot.result.list if item.symbol in ["BTCUSDT", "ETHUSDT"]]
     save_struct_to_file(base_path + "spot/" + "instruments.json", result_list_spot, force_create)
 
     # --- Linear ---
@@ -80,9 +78,7 @@ async def test_sandbox_get_instruments(client: BybitHttpClient) -> None:
     instruments_linear = await instruments_linear_endpoint.get(
         BybitInstrumentsInfoGetParams(category=BybitProductType.LINEAR),
     )
-    result_list_linear = [
-        item for item in instruments_linear.result.list if item.symbol in ["BTCUSDT", "ETHUSDT"]
-    ]
+    result_list_linear = [item for item in instruments_linear.result.list if item.symbol in ["BTCUSDT", "ETHUSDT"]]
     save_struct_to_file(
         base_path + "linear/" + "instruments.json",
         result_list_linear,

@@ -282,8 +282,7 @@ class LiveExecutionEngine(ExecutionEngine):
             self._loop.call_soon_threadsafe(self._cmd_queue.put_nowait, command)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_cmd_queue.put` as queue full "
-                f"at {self._cmd_queue.qsize():_} items",
+                f"Blocking on `_cmd_queue.put` as queue full " f"at {self._cmd_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._cmd_queue.put(command))
@@ -312,8 +311,7 @@ class LiveExecutionEngine(ExecutionEngine):
             self._loop.call_soon_threadsafe(self._evt_queue.put_nowait, event)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_evt_queue.put` as queue full "
-                f"at {self._evt_queue.qsize():_} items",
+                f"Blocking on `_evt_queue.put` as queue full " f"at {self._evt_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._evt_queue.put(event))
@@ -467,9 +465,7 @@ class LiveExecutionEngine(ExecutionEngine):
         reconciliation_lookback_mins: int | None = (
             self.reconciliation_lookback_mins if self.reconciliation_lookback_mins > 0 else None
         )
-        mass_status_coros = [
-            c.generate_mass_status(reconciliation_lookback_mins) for c in self._clients.values()
-        ]
+        mass_status_coros = [c.generate_mass_status(reconciliation_lookback_mins) for c in self._clients.values()]
         mass_status_all = await asyncio.gather(*mass_status_coros)
 
         # Reconcile each mass status with the execution engine
@@ -518,9 +514,7 @@ class LiveExecutionEngine(ExecutionEngine):
             return False
 
         self._msgbus.publish(
-            topic=f"reports.execution"
-            f".{report.instrument_id.venue}"
-            f".{report.instrument_id.symbol}",
+            topic=f"reports.execution" f".{report.instrument_id.venue}" f".{report.instrument_id.symbol}",
             msg=report,
         )
 
@@ -624,8 +618,7 @@ class LiveExecutionEngine(ExecutionEngine):
         instrument: Instrument | None = self._cache.instrument(order.instrument_id)
         if instrument is None:
             self._log.error(
-                f"Cannot reconcile order for {order.client_order_id!r}: "
-                f"instrument {order.instrument_id} not found",
+                f"Cannot reconcile order for {order.client_order_id!r}: " f"instrument {order.instrument_id} not found",
             )
             return False  # Failed
 
@@ -713,8 +706,7 @@ class LiveExecutionEngine(ExecutionEngine):
         instrument: Instrument | None = self._cache.instrument(order.instrument_id)
         if instrument is None:
             self._log.error(
-                f"Cannot reconcile order for {order.client_order_id!r}: "
-                f"instrument {order.instrument_id} not found",
+                f"Cannot reconcile order for {order.client_order_id!r}: " f"instrument {order.instrument_id} not found",
             )
             return False  # Failed
 
@@ -797,11 +789,7 @@ class LiveExecutionEngine(ExecutionEngine):
             diff_quantity = Quantity(diff, instrument.size_precision)
             self._log.info(f"{diff_quantity=}", LogColor.BLUE)
 
-            order_side = (
-                OrderSide.BUY
-                if report.signed_decimal_qty > position_signed_decimal_qty
-                else OrderSide.SELL
-            )
+            order_side = OrderSide.BUY if report.signed_decimal_qty > position_signed_decimal_qty else OrderSide.SELL
 
             now = self._clock.timestamp_ns()
             diff_report = OrderStatusReport(
@@ -909,9 +897,7 @@ class LiveExecutionEngine(ExecutionEngine):
         if report.display_qty is not None:
             options["display_qty"] = str(report.display_qty)
 
-        options["expire_time_ns"] = (
-            0 if report.expire_time is None else dt_to_unix_nanos(report.expire_time)
-        )
+        options["expire_time_ns"] = 0 if report.expire_time is None else dt_to_unix_nanos(report.expire_time)
 
         strategy_id = self.get_external_order_claim(report.instrument_id)
         if strategy_id is None:

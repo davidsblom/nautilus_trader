@@ -1108,9 +1108,7 @@ class TestCache:
         assert self.cache.positions_open(venue=AUDUSD_SIM.venue, side=PositionSide.LONG) == [
             position1,
         ]
-        assert (
-            self.cache.positions_open(instrument_id=BTCUSD_BINANCE.id, side=PositionSide.LONG) == []
-        )
+        assert self.cache.positions_open(instrument_id=BTCUSD_BINANCE.id, side=PositionSide.LONG) == []
         assert self.cache.positions_open(instrument_id=AUDUSD_SIM.id, side=PositionSide.LONG) == [
             position1,
         ]

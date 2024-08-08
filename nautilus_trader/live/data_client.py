@@ -181,8 +181,7 @@ class LiveDataClient(DataClient):
                 except Exception as e:
                     tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
                     self._log.error(
-                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: "
-                        f"{e!r}\n{tb_str}",
+                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: " f"{e!r}\n{tb_str}",
                     )
             if success_msg:
                 self._log.info(success_msg, success_color)
@@ -408,8 +407,7 @@ class LiveMarketDataClient(MarketDataClient):
                 except Exception as e:
                     tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
                     self._log.error(
-                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: "
-                        f"{e!r}\n{tb_str}",
+                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: " f"{e!r}\n{tb_str}",
                     )
             if success_msg:
                 self._log.info(success_msg, success_color)

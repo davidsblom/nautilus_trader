@@ -741,8 +741,7 @@ class BetfairDataProvider:
         return [
             m
             for m in catalogue
-            if m["eventType"]["name"] in ("Horse Racing", "American Football")
-            or m["marketId"] in market_ids
+            if m["eventType"]["name"] in ("Horse Racing", "American Football") or m["marketId"] in market_ids
         ]
 
     @staticmethod
@@ -774,10 +773,7 @@ class BetfairDataProvider:
                 .replace(runner2.encode(), b"38848248")
             )
 
-        return [
-            stream_decode(_fix_ids(line.strip()))
-            for line in BetfairDataProvider.read_lines(filename)
-        ]
+        return [stream_decode(_fix_ids(line.strip())) for line in BetfairDataProvider.read_lines(filename)]
 
     @staticmethod
     def mcm_to_instruments(mcm: MCM, currency="GBP") -> list[BettingInstrument]:

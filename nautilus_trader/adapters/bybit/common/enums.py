@@ -238,9 +238,7 @@ class BybitEnumParser:
             BybitOrderSide.BUY: OrderSide.BUY,
             BybitOrderSide.SELL: OrderSide.SELL,
         }
-        self.nautilus_to_bybit_order_side = {
-            b: a for a, b in self.bybit_to_nautilus_order_side.items()
-        }
+        self.nautilus_to_bybit_order_side = {b: a for a, b in self.bybit_to_nautilus_order_side.items()}
         self.bybit_to_nautilus_order_type = {
             (
                 BybitOrderType.MARKET,
@@ -446,9 +444,7 @@ class BybitEnumParser:
             BybitTriggerType.MARK_PRICE: TriggerType.MARK_PRICE,
             BybitTriggerType.INDEX_PRICE: TriggerType.INDEX_PRICE,
         }
-        self.nautilus_to_bybit_trigger_type = {
-            b: a for a, b in self.bybit_to_nautilus_trigger_type.items()
-        }
+        self.nautilus_to_bybit_trigger_type = {b: a for a, b in self.bybit_to_nautilus_trigger_type.items()}
         self.nautilus_to_bybit_trigger_type[TriggerType.DEFAULT] = BybitTriggerType.LAST_PRICE
 
         # klines

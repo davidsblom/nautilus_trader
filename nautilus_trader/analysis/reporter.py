@@ -100,9 +100,7 @@ class ReportProvider:
         if not orders:
             return pd.DataFrame()
 
-        fills = [
-            OrderFilled.to_dict(e) for o in orders for e in o.events if isinstance(e, OrderFilled)
-        ]
+        fills = [OrderFilled.to_dict(e) for o in orders for e in o.events if isinstance(e, OrderFilled)]
         if not fills:
             return pd.DataFrame()
 
@@ -144,8 +142,7 @@ class ReportProvider:
         del report["settlement_currency"]
         report["ts_opened"] = [unix_nanos_to_dt(ts_opened) for ts_opened in report["ts_opened"]]
         report["ts_closed"] = [
-            unix_nanos_to_dt(ts_closed) if not pd.isna(ts_closed) else pd.NA
-            for ts_closed in report["ts_closed"]
+            unix_nanos_to_dt(ts_closed) if not pd.isna(ts_closed) else pd.NA for ts_closed in report["ts_closed"]
         ]
 
         return report
@@ -171,11 +168,7 @@ class ReportProvider:
             return pd.DataFrame()
 
         account_states = [AccountState.to_dict(s) for s in states]
-        balances = [
-            {**balance, **state}
-            for state in account_states
-            for balance in state.pop("balances", [])
-        ]
+        balances = [{**balance, **state} for state in account_states for balance in state.pop("balances", [])]
 
         if not account_states:
             return pd.DataFrame()

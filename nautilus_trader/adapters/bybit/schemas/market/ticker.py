@@ -164,6 +164,4 @@ BybitTicker = BybitTickerLinear | BybitTickerOption | BybitTickerSpot
 
 BybitTickerList = list[BybitTickerLinear] | list[BybitTickerOption] | list[BybitTickerSpot]
 
-BybitTickersResponse = (
-    BybitTickersLinearResponse | BybitTickersSpotResponse | BybitTickersOptionResponse
-)
+BybitTickersResponse = BybitTickersLinearResponse | BybitTickersSpotResponse | BybitTickersOptionResponse

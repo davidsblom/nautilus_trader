@@ -169,10 +169,7 @@ class TestSimulatedExchangeMarginAccount:
 
     def test_repr(self) -> None:
         # Arrange, Act, Assert
-        assert (
-            repr(self.exchange)
-            == "SimulatedExchange(id=SIM, oms_type=HEDGING, account_type=MARGIN)"
-        )
+        assert repr(self.exchange) == "SimulatedExchange(id=SIM, oms_type=HEDGING, account_type=MARGIN)"
 
     def test_set_fill_model(self) -> None:
         # Arrange

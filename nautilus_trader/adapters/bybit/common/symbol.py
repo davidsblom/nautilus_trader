@@ -57,8 +57,7 @@ class BybitSymbol(str):
         PyCondition.valid_string(symbol, "symbol")
         if not has_valid_bybit_suffix(symbol):
             raise ValueError(
-                f"Invalid symbol '{symbol}': "
-                f"does not contain a valid suffix from {VALID_SUFFIXES}",
+                f"Invalid symbol '{symbol}': " f"does not contain a valid suffix from {VALID_SUFFIXES}",
             )
 
         return super().__new__(

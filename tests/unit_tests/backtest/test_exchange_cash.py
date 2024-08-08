@@ -139,9 +139,7 @@ class TestSimulatedExchangeCashAccount:
 
     def test_repr(self) -> None:
         # Arrange, Act, Assert
-        assert (
-            repr(self.exchange) == "SimulatedExchange(id=XNAS, oms_type=NETTING, account_type=CASH)"
-        )
+        assert repr(self.exchange) == "SimulatedExchange(id=XNAS, oms_type=NETTING, account_type=CASH)"
 
     def test_equity_short_selling_will_reject(self) -> None:
         # Arrange: Prepare market

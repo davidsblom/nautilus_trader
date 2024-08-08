@@ -1064,8 +1064,7 @@ class NautilusKernel:
 
     async def _await_engines_connected(self) -> bool:
         self._log.info(
-            f"Awaiting engine connections and initializations "
-            f"({self._config.timeout_connection}s timeout)...",
+            f"Awaiting engine connections and initializations " f"({self._config.timeout_connection}s timeout)...",
             color=LogColor.BLUE,
         )
         if not await self._check_engines_connected():
@@ -1082,8 +1081,7 @@ class NautilusKernel:
 
     async def _await_engines_disconnected(self) -> None:
         self._log.info(
-            f"Awaiting engine disconnections "
-            f"({self._config.timeout_disconnection}s timeout)...",
+            f"Awaiting engine disconnections " f"({self._config.timeout_disconnection}s timeout)...",
             color=LogColor.BLUE,
         )
         if not await self._check_engines_disconnected():
@@ -1097,8 +1095,7 @@ class NautilusKernel:
 
     async def _await_execution_reconciliation(self) -> bool:
         self._log.info(
-            f"Awaiting execution state reconciliation "
-            f"({self._config.timeout_reconciliation}s timeout)...",
+            f"Awaiting execution state reconciliation " f"({self._config.timeout_reconciliation}s timeout)...",
             color=LogColor.BLUE,
         )
         if not await self._exec_engine.reconcile_state(

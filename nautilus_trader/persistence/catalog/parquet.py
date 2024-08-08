@@ -144,11 +144,7 @@ class ParquetDataCatalog(BaseDataCatalog):
         else:
             final_path = str(path)
 
-        if (
-            isinstance(self.fs, MemoryFileSystem)
-            and platform.system() == "Windows"
-            and not final_path.startswith("/")
-        ):
+        if isinstance(self.fs, MemoryFileSystem) and platform.system() == "Windows" and not final_path.startswith("/"):
             final_path = "/" + final_path
 
         self.path = str(final_path)
@@ -396,10 +392,7 @@ class ParquetDataCatalog(BaseDataCatalog):
 
         if not is_nautilus_class(data_cls):
             # Special handling for generic data
-            data = [
-                CustomData(data_type=DataType(data_cls, metadata=kwargs.get("metadata")), data=d)
-                for d in data
-            ]
+            data = [CustomData(data_type=DataType(data_cls, metadata=kwargs.get("metadata")), data=d) for d in data]
         return data
 
     def backend_session(
@@ -435,13 +428,9 @@ class ParquetDataCatalog(BaseDataCatalog):
 
             # Filter by instrument ID
             if data_cls == Bar:
-                if instrument_ids and not any(
-                    dir.startswith(urisafe_instrument_id(x) + "-") for x in instrument_ids
-                ):
+                if instrument_ids and not any(dir.startswith(urisafe_instrument_id(x) + "-") for x in instrument_ids):
                     continue
-            elif instrument_ids and not any(
-                dir == urisafe_instrument_id(x) for x in instrument_ids
-            ):
+            elif instrument_ids and not any(dir == urisafe_instrument_id(x) for x in instrument_ids):
                 continue
 
             # Filter by bar type
@@ -513,12 +502,8 @@ class ParquetDataCatalog(BaseDataCatalog):
             end=end,
         )
 
-        assert (
-            table is not None
-        ), f"No table found for {data_cls=} {instrument_ids=} {filter_expr=} {start=} {end=}"
-        assert (
-            table.num_rows
-        ), f"No rows found for {data_cls=} {instrument_ids=} {filter_expr=} {start=} {end=}"
+        assert table is not None, f"No table found for {data_cls=} {instrument_ids=} {filter_expr=} {start=} {end=}"
+        assert table.num_rows, f"No rows found for {data_cls=} {instrument_ids=} {filter_expr=} {start=} {end=}"
 
         return self._handle_table_nautilus(table, data_cls=data_cls)
 
@@ -539,19 +524,13 @@ class ParquetDataCatalog(BaseDataCatalog):
         if instrument_ids is not None:
             if not isinstance(instrument_ids, list):
                 instrument_ids = [instrument_ids]
-            valid_files = [
-                fn
-                for fn in dataset.files
-                if any(urisafe_instrument_id(x) in fn for x in instrument_ids)
-            ]
+            valid_files = [fn for fn in dataset.files if any(urisafe_instrument_id(x) in fn for x in instrument_ids)]
             dataset = pds.dataset(valid_files, filesystem=self.fs)
 
         if bar_types is not None:
             if not isinstance(bar_types, list):
                 bar_types = [bar_types]
-            valid_files = [
-                fn for fn in dataset.files if any(x.replace("/", "") in fn for x in bar_types)
-            ]
+            valid_files = [fn for fn in dataset.files if any(x.replace("/", "") in fn for x in bar_types)]
             dataset = pds.dataset(valid_files, filesystem=self.fs)
 
         filters: list[pds.Expression] = [filter_expr] if filter_expr is not None else []

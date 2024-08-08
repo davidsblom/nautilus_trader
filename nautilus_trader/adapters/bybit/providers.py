@@ -107,10 +107,7 @@ class BybitInstrumentProvider(InstrumentProvider):
                         item
                         for item in fee_rates[product_type]
                         if item.symbol == instrument.symbol
-                        or (
-                            product_type == BybitProductType.OPTION
-                            and instrument.baseCoin == item.baseCoin
-                        )
+                        or (product_type == BybitProductType.OPTION and instrument.baseCoin == item.baseCoin)
                     ),
                     None,
                 )

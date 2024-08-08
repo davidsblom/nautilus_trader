@@ -153,9 +153,7 @@ class DatabentoDataLoader:
             path = str(path.resolve())
 
         pyo3_instrument_id: nautilus_pyo3.InstrumentId | None = (
-            nautilus_pyo3.InstrumentId.from_str(instrument_id.value)
-            if instrument_id is not None
-            else None
+            nautilus_pyo3.InstrumentId.from_str(instrument_id.value) if instrument_id is not None else None
         )
 
         schema = self._pyo3_loader.schema_for_file(str(path))

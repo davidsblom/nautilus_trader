@@ -301,8 +301,7 @@ class TradingNode:
         try:
             if not self._is_built:
                 raise RuntimeError(
-                    "The trading nodes clients have not been built. "
-                    "Run `node.build()` prior to start.",
+                    "The trading nodes clients have not been built. " "Run `node.build()` prior to start.",
                 )
 
             self._is_running = True

@@ -151,11 +151,5 @@ class TestSubscription:
         )
 
         # Assert
-        assert (
-            str(subscription)
-            == f"Subscription(topic=system_status, handler={handler_str}, priority=0)"
-        )
-        assert (
-            repr(subscription)
-            == f"Subscription(topic=system_status, handler={handler_str}, priority=0)"
-        )
+        assert str(subscription) == f"Subscription(topic=system_status, handler={handler_str}, priority=0)"
+        assert repr(subscription) == f"Subscription(topic=system_status, handler={handler_str}, priority=0)"

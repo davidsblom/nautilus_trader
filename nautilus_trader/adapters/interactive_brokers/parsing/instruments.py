@@ -170,9 +170,7 @@ def contract_details_to_dict(details: IBContractDetails) -> dict:
     dict_details = details.dict().copy()
     dict_details["contract"] = details.contract.dict().copy()
     if dict_details.get("secIdList"):
-        dict_details["secIdList"] = {
-            tag_value.tag: tag_value.value for tag_value in dict_details["secIdList"]
-        }
+        dict_details["secIdList"] = {tag_value.tag: tag_value.value for tag_value in dict_details["secIdList"]}
     return dict_details
 
 
@@ -512,16 +510,11 @@ def ib_contract_to_instrument_id_simplified_symbology(  # noqa: C901 (too comple
         symbol = f"{m['symbol']}{m['month']}{decade_digit(m['year'], contract)}{m['year']}{m['right']}{m['strike']}"
         venue = contract.exchange
     elif security_type in ["CASH", "CRYPTO"]:
-        symbol = (
-            f"{contract.localSymbol}".replace(".", "/") or f"{contract.symbol}/{contract.currency}"
-        )
+        symbol = f"{contract.localSymbol}".replace(".", "/") or f"{contract.symbol}/{contract.currency}"
         venue = contract.exchange
     elif security_type == "CFD":
         if m := RE_CFD_CASH.match(contract.localSymbol):
-            symbol = (
-                f"{contract.localSymbol}".replace(".", "/")
-                or f"{contract.symbol}/{contract.currency}"
-            )
+            symbol = f"{contract.localSymbol}".replace(".", "/") or f"{contract.symbol}/{contract.currency}"
             venue = "IBCFD"
         else:
             symbol = (contract.symbol).replace(" ", "-")
@@ -588,25 +581,19 @@ def instrument_id_to_ib_contract_strict_symbology(instrument_id: InstrumentId) -
 def instrument_id_to_ib_contract_simplified_symbology(  # noqa: C901 (too complex)
     instrument_id: InstrumentId,
 ) -> IBContract:
-    if instrument_id.venue.value in VENUES_CASH and (
-        m := RE_CASH.match(instrument_id.symbol.value)
-    ):
+    if instrument_id.venue.value in VENUES_CASH and (m := RE_CASH.match(instrument_id.symbol.value)):
         return IBContract(
             secType="CASH",
             exchange=instrument_id.venue.value,
             localSymbol=f"{m['symbol']}.{m['currency']}",
         )
-    elif instrument_id.venue.value in VENUES_CRYPTO and (
-        m := RE_CRYPTO.match(instrument_id.symbol.value)
-    ):
+    elif instrument_id.venue.value in VENUES_CRYPTO and (m := RE_CRYPTO.match(instrument_id.symbol.value)):
         return IBContract(
             secType="CRYPTO",
             exchange=instrument_id.venue.value,
             localSymbol=f"{m['symbol']}.{m['currency']}",
         )
-    elif instrument_id.venue.value in VENUES_OPT and (
-        m := RE_OPT.match(instrument_id.symbol.value)
-    ):
+    elif instrument_id.venue.value in VENUES_OPT and (m := RE_OPT.match(instrument_id.symbol.value)):
         return IBContract(
             secType="OPT",
             exchange=instrument_id.venue.value,

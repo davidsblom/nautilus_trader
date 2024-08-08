@@ -209,16 +209,8 @@ class TestSimulatedExchangeEmulatedContingencyOrders:
         sl_order = bracket.orders[1]
         tp_order = bracket.orders[2]
         assert entry_order.status == OrderStatus.FILLED
-        assert (
-            sl_order.status == OrderStatus.EMULATED
-            if sl_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
-        assert (
-            tp_order.status == OrderStatus.EMULATED
-            if tp_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
+        assert sl_order.status == OrderStatus.EMULATED if sl_order.is_emulated else OrderStatus.ACCEPTED
+        assert tp_order.status == OrderStatus.EMULATED if tp_order.is_emulated else OrderStatus.ACCEPTED
 
     @pytest.mark.parametrize(
         (
@@ -428,21 +420,9 @@ class TestSimulatedExchangeEmulatedContingencyOrders:
         entry_order = self.cache.order(bracket.orders[0].client_order_id)
         sl_order = self.cache.order(bracket.orders[1].client_order_id)
         tp_order = self.cache.order(bracket.orders[2].client_order_id)
-        assert (
-            entry_order.status == OrderStatus.ACCEPTED
-            if sl_order.is_emulated
-            else OrderStatus.TRIGGERED
-        )
-        assert (
-            sl_order.status == OrderStatus.EMULATED
-            if sl_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
-        assert (
-            tp_order.status == OrderStatus.EMULATED
-            if tp_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
+        assert entry_order.status == OrderStatus.ACCEPTED if sl_order.is_emulated else OrderStatus.TRIGGERED
+        assert sl_order.status == OrderStatus.EMULATED if sl_order.is_emulated else OrderStatus.ACCEPTED
+        assert tp_order.status == OrderStatus.EMULATED if tp_order.is_emulated else OrderStatus.ACCEPTED
 
     @pytest.mark.parametrize(
         (
@@ -548,16 +528,8 @@ class TestSimulatedExchangeEmulatedContingencyOrders:
         tp_order = self.cache.order(bracket.orders[2].client_order_id)
         assert entry_order.status == OrderStatus.FILLED
         assert entry_order.avg_px == entry_order.price  # <-- fills at limit price
-        assert (
-            sl_order.status == OrderStatus.EMULATED
-            if sl_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
-        assert (
-            tp_order.status == OrderStatus.EMULATED
-            if tp_order.is_emulated
-            else OrderStatus.ACCEPTED
-        )
+        assert sl_order.status == OrderStatus.EMULATED if sl_order.is_emulated else OrderStatus.ACCEPTED
+        assert tp_order.status == OrderStatus.EMULATED if tp_order.is_emulated else OrderStatus.ACCEPTED
 
     @pytest.mark.parametrize(
         (

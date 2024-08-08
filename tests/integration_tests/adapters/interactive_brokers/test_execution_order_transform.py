@@ -52,9 +52,7 @@ async def test_transform_order_to_ib_order_market(
     ib_order = exec_client._transform_order_to_ib_order(nautilus_order)
 
     # Assert
-    assert (
-        ib_order.orderType == expected_order_type
-    ), f"{expected_order_type=}, but got {ib_order.orderType=}"
+    assert ib_order.orderType == expected_order_type, f"{expected_order_type=}, but got {ib_order.orderType=}"
     assert ib_order.tif == expected_tif, f"{expected_tif=}, but got {ib_order.tif=}"
 
 
@@ -85,7 +83,5 @@ async def test_transform_order_to_ib_order_limit(
     ib_order = exec_client._transform_order_to_ib_order(nautilus_order)
 
     # Assert
-    assert (
-        ib_order.orderType == expected_order_type
-    ), f"{expected_order_type=}, but got {ib_order.orderType=}"
+    assert ib_order.orderType == expected_order_type, f"{expected_order_type=}, but got {ib_order.orderType=}"
     assert ib_order.tif == expected_tif, f"{expected_tif=}, but got {ib_order.tif=}"

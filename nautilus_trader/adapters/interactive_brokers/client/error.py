@@ -216,6 +216,5 @@ class InteractiveBrokersClientErrorMixin(BaseMixin):
         else:
             # Log unknown order warnings / errors
             self._log.warning(
-                f"Unhandled order warning or error code: {error_code} (req_id {req_id}) - "
-                f"{error_string}",
+                f"Unhandled order warning or error code: {error_code} (req_id {req_id}) - " f"{error_string}",
             )

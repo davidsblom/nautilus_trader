@@ -109,11 +109,7 @@ def _deserialize(values: list[Any]) -> AccountState:
         if not pd.isna(v.get("margin_initial"))
     ]
 
-    state = {
-        k: v
-        for k, v in values[0].items()
-        if not k.startswith("balance_") and not k.startswith("margin_")
-    }
+    state = {k: v for k, v in values[0].items() if not k.startswith("balance_") and not k.startswith("margin_")}
 
     state["balances"] = balances
     state["margins"] = margins

@@ -173,10 +173,7 @@ class InteractiveBrokersClient(
         while not self._is_ib_connected.is_set():
             try:
                 self._connection_attempts += 1
-                if (
-                    not self._indefinite_reconnect
-                    and self._connection_attempts > self._max_connection_attempts
-                ):
+                if not self._indefinite_reconnect and self._connection_attempts > self._max_connection_attempts:
                     self._log.error("Max connection attempts reached. Connection failed.")
                     self._stop()
                     break
@@ -441,8 +438,7 @@ class InteractiveBrokersClient(
                     actions()
                 except Exception as e:
                     self._log.error(
-                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: "
-                        f"{e!r}",
+                        f"Failed triggering action {actions.__name__} on `{task.get_name()}`: " f"{e!r}",
                     )
             if success:
                 self._log.info(success, LogColor.GREEN)
@@ -580,11 +576,7 @@ class InteractiveBrokersClient(
             "Client internal message queue processor started.",
         )
         try:
-            while (
-                self._eclient.conn
-                and self._eclient.conn.isConnected()
-                or not self._internal_msg_queue.empty()
-            ):
+            while self._eclient.conn and self._eclient.conn.isConnected() or not self._internal_msg_queue.empty():
                 msg = await self._internal_msg_queue.get()
                 if not await self._process_message(msg):
                     break

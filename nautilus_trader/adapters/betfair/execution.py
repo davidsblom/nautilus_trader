@@ -291,9 +291,7 @@ class BetfairExecutionClient(LiveExecutionClient):
             self._log.warning(f"Could not find order for {venue_order_id=} {client_order_id=}")
             return None
         # We have a response, check list length and grab first entry
-        assert (
-            len(orders) == 1
-        ), f"More than one order found for {venue_order_id=} {client_order_id=}"
+        assert len(orders) == 1, f"More than one order found for {venue_order_id=} {client_order_id=}"
         order: CurrentOrderSummary = orders[0]
         instrument = self._cache.instrument(instrument_id)
         venue_order_id = VenueOrderId(str(order.bet_id))
@@ -835,9 +833,7 @@ class BetfairExecutionClient(LiveExecutionClient):
                     for order in orders:
                         for event in order.events:
                             if isinstance(event, OrderFilled) and (
-                                order.side == side
-                                and order.price == price
-                                and quantity <= order.quantity
+                                order.side == side and order.price == price and quantity <= order.quantity
                             ):
                                 matched = True
                     if not matched:
@@ -925,9 +921,7 @@ class BetfairExecutionClient(LiveExecutionClient):
                 new_price = betfair_float_to_price(unmatched_order.avp)
                 new_size = unmatched_order.sm - prev_size
                 total_size = prev_size + new_size
-                price = (new_price - (prev_price * (prev_size / total_size))) / (
-                    new_size / total_size
-                )
+                price = (new_price - (prev_price * (prev_size / total_size))) / (new_size / total_size)
                 self._log.debug(
                     f"Calculating fill price {prev_price=} {prev_size=} {new_price=} {new_size=} == {price=}",
                 )
@@ -989,11 +983,7 @@ class BetfairExecutionClient(LiveExecutionClient):
             if key not in self.pending_update_order_client_ids:
                 # The remainder of this order has been canceled
                 cancelled_ts = unmatched_order.cd or unmatched_order.ld or unmatched_order.md
-                cancelled_ts = (
-                    millis_to_nanos(cancelled_ts)
-                    if cancelled_ts is not None
-                    else self._clock.timestamp_ns()
-                )
+                cancelled_ts = millis_to_nanos(cancelled_ts) if cancelled_ts is not None else self._clock.timestamp_ns()
                 self.generate_order_canceled(
                     strategy_id=order.strategy_id,
                     instrument_id=instrument.id,

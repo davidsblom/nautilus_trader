@@ -221,10 +221,7 @@ class TestModelEvents:
 
         # Act, Assert
         assert OrderEmulated.from_dict(OrderEmulated.to_dict(event)) == event
-        assert (
-            str(event)
-            == "OrderEmulated(instrument_id=BTCUSDT.BINANCE, client_order_id=O-2020872378423)"
-        )
+        assert str(event) == "OrderEmulated(instrument_id=BTCUSDT.BINANCE, client_order_id=O-2020872378423)"
         assert (
             repr(event)
             == f"OrderEmulated(trader_id=TRADER-001, strategy_id=SCALPER-001, instrument_id=BTCUSDT.BINANCE, client_order_id=O-2020872378423, event_id={uuid}, ts_init=0)"  # noqa

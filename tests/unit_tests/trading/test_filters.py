@@ -150,9 +150,7 @@ class TestEconomicNewsEventFilter:
         )
 
         # Act, Assert
-        assert (
-            pd.Timestamp("2008-01-01 10:00:00+0000", tz="UTC") == news_filter.unfiltered_data_start
-        )
+        assert pd.Timestamp("2008-01-01 10:00:00+0000", tz="UTC") == news_filter.unfiltered_data_start
         assert pd.Timestamp("2020-12-31 23:00:00+0000", tz="UTC") == news_filter.unfiltered_data_end
         assert news_filter.currencies == currencies
         assert news_filter.impacts == impacts

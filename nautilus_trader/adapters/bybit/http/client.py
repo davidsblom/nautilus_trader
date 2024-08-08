@@ -152,9 +152,7 @@ class BybitHttpClient:
             payload = {}
 
         [timestamp, authed_signature] = (
-            self._sign_get_request(payload)
-            if http_method == HttpMethod.GET
-            else self._sign_post_request(payload)
+            self._sign_get_request(payload) if http_method == HttpMethod.GET else self._sign_post_request(payload)
         )
         return await self.send_request(
             http_method=http_method,

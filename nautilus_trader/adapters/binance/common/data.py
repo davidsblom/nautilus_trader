@@ -223,8 +223,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
             while True:
                 try:
                     self._log.debug(
-                        f"Scheduled `update_instruments` to run in "
-                        f"{self._update_instrument_interval}s",
+                        f"Scheduled `update_instruments` to run in " f"{self._update_instrument_interval}s",
                     )
                     await asyncio.sleep(self._update_instrument_interval)
                     await self._instrument_provider.load_all_async()
@@ -264,11 +263,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         await self._ws_client.disconnect()
 
     def _should_retry(self, error_code: BinanceErrorCode, retries: int) -> bool:
-        if (
-            error_code not in self._retry_errors
-            or not self._max_retries
-            or retries > self._max_retries
-        ):
+        if error_code not in self._retry_errors or not self._max_retries or retries > self._max_retries:
             return False
         return True
 
@@ -466,8 +461,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         resolution = self._enum_parser.parse_nautilus_bar_aggregation(bar_type.spec.aggregation)
         if self._binance_account_type.is_futures and resolution == "s":
             self._log.error(
-                f"Cannot subscribe to {bar_type}. "
-                "Second interval bars are not aggregated by Binance Futures",
+                f"Cannot subscribe to {bar_type}. " "Second interval bars are not aggregated by Binance Futures",
             )
         try:
             interval = BinanceKlineInterval(f"{bar_type.spec.step}{resolution}")
@@ -510,8 +504,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         resolution = self._enum_parser.parse_nautilus_bar_aggregation(bar_type.spec.aggregation)
         if self._binance_account_type.is_futures and resolution == "s":
             self._log.error(
-                f"Cannot unsubscribe from {bar_type}. "
-                "Second interval bars are not aggregated by Binance Futures",
+                f"Cannot unsubscribe from {bar_type}. " "Second interval bars are not aggregated by Binance Futures",
             )
         try:
             interval = BinanceKlineInterval(f"{bar_type.spec.step}{resolution}")
@@ -624,8 +617,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
     ) -> None:
         if bar_type.spec.price_type != PriceType.LAST:
             self._log.error(
-                f"Cannot request {bar_type}: "
-                f"only historical bars for LAST price type available from Binance",
+                f"Cannot request {bar_type}: " f"only historical bars for LAST price type available from Binance",
             )
             return
 
@@ -647,15 +639,13 @@ class BinanceCommonDataClient(LiveMarketDataClient):
             resolution = self._enum_parser.parse_nautilus_bar_aggregation(bar_type.spec.aggregation)
             if not self._binance_account_type.is_spot_or_margin and resolution == "s":
                 self._log.error(
-                    f"Cannot request {bar_type}: "
-                    "second interval bars are not aggregated by Binance Futures",
+                    f"Cannot request {bar_type}: " "second interval bars are not aggregated by Binance Futures",
                 )
             try:
                 interval = BinanceKlineInterval(f"{bar_type.spec.step}{resolution}")
             except ValueError:
                 self._log.error(
-                    f"Cannot create Binance Kline interval. {bar_type.spec.step}{resolution} "
-                    "not supported",
+                    f"Cannot create Binance Kline interval. {bar_type.spec.step}{resolution} " "not supported",
                 )
                 return
 

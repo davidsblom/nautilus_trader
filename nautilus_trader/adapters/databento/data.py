@@ -213,8 +213,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         while True:
             try:
                 self._log.debug(
-                    f"Scheduled `update_instruments` to run in "
-                    f"{self._update_dataset_ranges_interval_seconds}s",
+                    f"Scheduled `update_instruments` to run in " f"{self._update_dataset_ranges_interval_seconds}s",
                 )
 
                 await asyncio.sleep(self._update_dataset_ranges_interval_seconds)
@@ -490,8 +489,7 @@ class DatabentoDataClient(LiveMarketDataClient):
 
             if self._live_clients_mbo.get(dataset) is not None:
                 self._log.error(
-                    f"Cannot subscribe to order book deltas for {instrument_id}, "
-                    "MBO/L3 feed already started",
+                    f"Cannot subscribe to order book deltas for {instrument_id}, " "MBO/L3 feed already started",
                 )
                 return
 
@@ -671,14 +669,12 @@ class DatabentoDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_instrument(self, instrument_id: InstrumentId) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {instrument_id} instrument, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {instrument_id} instrument, " "unsubscribing not supported by Databento.",
         )
 
     async def _unsubscribe_order_book_deltas(self, instrument_id: InstrumentId) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {instrument_id} order book deltas, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {instrument_id} order book deltas, " "unsubscribing not supported by Databento.",
         )
 
     async def _unsubscribe_order_book_snapshots(self, instrument_id: InstrumentId) -> None:
@@ -689,26 +685,22 @@ class DatabentoDataClient(LiveMarketDataClient):
 
     async def _unsubscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {instrument_id} quote ticks, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {instrument_id} quote ticks, " "unsubscribing not supported by Databento.",
         )
 
     async def _unsubscribe_trade_ticks(self, instrument_id: InstrumentId) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {instrument_id} trade ticks, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {instrument_id} trade ticks, " "unsubscribing not supported by Databento.",
         )
 
     async def _unsubscribe_bars(self, bar_type: BarType) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {bar_type} bars, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {bar_type} bars, " "unsubscribing not supported by Databento.",
         )
 
     async def _unsubscribe_instrument_status(self, instrument_id: InstrumentId) -> None:
         raise NotImplementedError(
-            f"Cannot unsubscribe from {instrument_id} instrument status, "
-            "unsubscribing not supported by Databento.",
+            f"Cannot unsubscribe from {instrument_id} instrument status, " "unsubscribing not supported by Databento.",
         )
 
     async def _request(self, data_type: DataType, correlation_id: UUID4) -> None:
@@ -736,8 +728,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         end = end or available_end
 
         self._log.info(
-            f"Requesting {instrument_id} instrument status: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} instrument status: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -768,8 +759,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         end = end or available_end
 
         self._log.info(
-            f"Requesting {instrument_id} imbalance: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} imbalance: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -798,8 +788,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         end = end or available_end
 
         self._log.info(
-            f"Requesting {instrument_id} statistics: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} statistics: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -830,8 +819,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         end = end or available_end
 
         self._log.info(
-            f"Requesting {instrument_id} instrument definitions: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} instrument definitions: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -863,8 +851,7 @@ class DatabentoDataClient(LiveMarketDataClient):
         end = end or available_end
 
         self._log.info(
-            f"Requesting {venue} instrument definitions: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {venue} instrument definitions: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -903,8 +890,7 @@ class DatabentoDataClient(LiveMarketDataClient):
             )
 
         self._log.info(
-            f"Requesting {instrument_id} quote ticks: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} quote ticks: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 
@@ -943,8 +929,7 @@ class DatabentoDataClient(LiveMarketDataClient):
             )
 
         self._log.info(
-            f"Requesting {instrument_id} trade ticks: "
-            f"dataset={dataset}, start={start}, end={end}",
+            f"Requesting {instrument_id} trade ticks: " f"dataset={dataset}, start={start}, end={end}",
             LogColor.BLUE,
         )
 

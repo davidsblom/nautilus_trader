@@ -132,9 +132,7 @@ class TestBetfairParsingStreaming:
 
         # Assert
         result = [
-            upd
-            for upd in updates
-            if isinstance(upd, InstrumentStatus) and upd.action == MarketStatusAction.PRE_OPEN
+            upd for upd in updates if isinstance(upd, InstrumentStatus) and upd.action == MarketStatusAction.PRE_OPEN
         ]
         assert len(result) == 17
 
@@ -172,11 +170,7 @@ class TestBetfairParsingStreaming:
         )
 
         # Assert
-        result = [
-            upd
-            for upd in updates
-            if isinstance(upd, CustomData) and upd.data_type.type == BetfairStartingPrice
-        ]
+        result = [upd for upd in updates if isinstance(upd, CustomData) and upd.data_type.type == BetfairStartingPrice]
         assert len(result) == 14
 
     def test_market_definition_to_instrument_updates(self):
@@ -256,10 +250,7 @@ class TestBetfairParsingStreaming:
         mcms = BetfairDataProvider.read_mcm("1.206064380.bz2")
         updates = [x for mcm in mcms for x in self.parser.parse(mcm)]
         counts = Counter(
-            [
-                x.__class__.__name__ if not isinstance(x, CustomData) else x.data.__class__.__name__
-                for x in updates
-            ],
+            [x.__class__.__name__ if not isinstance(x, CustomData) else x.data.__class__.__name__ for x in updates],
         )
         expected = Counter(
             {
@@ -327,11 +318,7 @@ class TestBetfairParsingStreaming:
                 instrument_id = next(ins for ins in trade_ticks if f"-{selection_id}-" in ins.value)
                 betfair_volume = betfair_tv[selection_id][price]
                 trade_volume = sum(
-                    [
-                        tick.size
-                        for tick in trade_ticks[instrument_id]
-                        if tick.price.as_double() == price
-                    ],
+                    [tick.size for tick in trade_ticks[instrument_id] if tick.price.as_double() == price],
                 )
                 assert betfair_volume == float(trade_volume)
 
@@ -352,13 +339,8 @@ class TestBetfairParsing:
         assert OrderSideParser.to_betfair(OrderSide.SELL) == Side.BACK
 
     def test_order_side_parser_round_trip(self):
-        assert (
-            OrderSideParser.to_nautilus(OrderSideParser.to_betfair(OrderSide.BUY)) == OrderSide.BUY
-        )
-        assert (
-            OrderSideParser.to_nautilus(OrderSideParser.to_betfair(OrderSide.SELL))
-            == OrderSide.SELL
-        )
+        assert OrderSideParser.to_nautilus(OrderSideParser.to_betfair(OrderSide.BUY)) == OrderSide.BUY
+        assert OrderSideParser.to_nautilus(OrderSideParser.to_betfair(OrderSide.SELL)) == OrderSide.SELL
 
     def test_order_submit_to_betfair(self):
         command = TestCommandStubs.submit_order_command(
@@ -691,9 +673,7 @@ class TestBetfairParsing:
         mcm = stream_decode(r)
         updates = self.parser.parse(mcm)
         starting_prices = [
-            upd.data
-            for upd in updates
-            if isinstance(upd, CustomData) and isinstance(upd.data, BetfairStartingPrice)
+            upd.data for upd in updates if isinstance(upd, CustomData) and isinstance(upd.data, BetfairStartingPrice)
         ]
         assert len(starting_prices) == 8
         assert starting_prices[0].instrument_id == InstrumentId.from_str(

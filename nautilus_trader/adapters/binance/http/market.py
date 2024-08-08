@@ -813,11 +813,7 @@ class BinanceMarketHttpAPI:
             if limit and len(response) < limit and interval_limited is False:
                 # end loop regardless when limit is not hit
                 break
-            if (
-                start_time is None
-                or end_time is None
-                or next_end_time >= nanos_to_millis(time.time_ns())
-            ):
+            if start_time is None or end_time is None or next_end_time >= nanos_to_millis(time.time_ns()):
                 break
             else:
                 last = response[-1]
@@ -914,9 +910,7 @@ class BinanceMarketHttpAPI:
                 start_time=start_time,
                 end_time=end_time,
             )
-            bars: list[BinanceBar] = [
-                kline.parse_to_binance_bar(bar_type, ts_init) for kline in klines
-            ]
+            bars: list[BinanceBar] = [kline.parse_to_binance_bar(bar_type, ts_init) for kline in klines]
             all_bars.extend(bars)
 
             # Update the start_time to fetch the next set of bars

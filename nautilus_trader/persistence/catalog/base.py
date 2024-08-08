@@ -171,11 +171,7 @@ class BaseDataCatalog(ABC, metaclass=_CombinedMeta):
 
     def list_generic_data_types(self) -> list[str]:
         data_types = self.list_data_types()
-        return [
-            n.replace(CUSTOM_DATA_PREFIX, "")
-            for n in data_types
-            if n.startswith(CUSTOM_DATA_PREFIX)
-        ]
+        return [n.replace(CUSTOM_DATA_PREFIX, "") for n in data_types if n.startswith(CUSTOM_DATA_PREFIX)]
 
     @abstractmethod
     def list_backtest_runs(self) -> list[str]:

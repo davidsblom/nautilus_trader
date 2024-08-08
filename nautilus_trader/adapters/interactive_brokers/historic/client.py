@@ -386,9 +386,7 @@ class HistoricInteractiveBrokersClient:
 
                 if not should_continue:
                     # Filter out ticks that are after the end_date_time
-                    ticks = [
-                        tick for tick in ticks if tick.ts_event <= dt_to_unix_nanos(end_date_time)
-                    ]
+                    ticks = [tick for tick in ticks if tick.ts_event <= dt_to_unix_nanos(end_date_time)]
                     data.extend(ticks)
                     self.log.info(f"Total number of {tick_type} ticks in data: {len(data)}")
                     break
@@ -520,12 +518,7 @@ class HistoricInteractiveBrokersClient:
             or delta.components.nanoseconds > 0
             else 0
         )
-        seconds = (
-            delta.components.hours * 3600
-            + delta.components.minutes * 60
-            + delta.components.seconds
-            + subsecond
-        )
+        seconds = delta.components.hours * 3600 + delta.components.minutes * 60 + delta.components.seconds + subsecond
 
         results = []
         if years:

@@ -202,9 +202,7 @@ class BinanceOrder(msgspec.Struct, frozen=True):
             trailing_offset_type = TrailingOffsetType.BASIS_POINTS
 
         avg_px = Decimal(self.avgPrice) if self.avgPrice is not None else None
-        post_only = (
-            self.type == BinanceOrderType.LIMIT_MAKER or self.timeInForce == BinanceTimeInForce.GTX
-        )
+        post_only = self.type == BinanceOrderType.LIMIT_MAKER or self.timeInForce == BinanceTimeInForce.GTX
         reduce_only = self.reduceOnly if self.reduceOnly is not None else False
 
         if self.side is None:
@@ -229,11 +227,7 @@ class BinanceOrder(msgspec.Struct, frozen=True):
             order_side=enum_parser.parse_binance_order_side(self.side),
             order_type=enum_parser.parse_binance_order_type(self.type),
             contingency_type=contingency_type,
-            time_in_force=(
-                enum_parser.parse_binance_time_in_force(self.timeInForce)
-                if self.timeInForce
-                else None
-            ),
+            time_in_force=(enum_parser.parse_binance_time_in_force(self.timeInForce) if self.timeInForce else None),
             order_status=order_status,
             price=Price.from_str(self.price),
             trigger_price=Price.from_str(str(trigger_price)),  # `decimal.Decimal`

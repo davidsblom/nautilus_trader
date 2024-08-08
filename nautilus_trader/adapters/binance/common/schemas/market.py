@@ -138,14 +138,8 @@ class BinanceDepth(msgspec.Struct, frozen=True):
         instrument_id: InstrumentId,
         ts_init: int,
     ) -> OrderBookDeltas:
-        bids = [
-            BookOrder(OrderSide.BUY, Price.from_str(o[0]), Quantity.from_str(o[1]), 0)
-            for o in self.bids or []
-        ]
-        asks = [
-            BookOrder(OrderSide.SELL, Price.from_str(o[0]), Quantity.from_str(o[1]), 0)
-            for o in self.asks or []
-        ]
+        bids = [BookOrder(OrderSide.BUY, Price.from_str(o[0]), Quantity.from_str(o[1]), 0) for o in self.bids or []]
+        asks = [BookOrder(OrderSide.SELL, Price.from_str(o[0]), Quantity.from_str(o[1]), 0) for o in self.asks or []]
 
         deltas = [OrderBookDelta.clear(instrument_id, ts_init, ts_init, self.lastUpdateId)]
         deltas += [
@@ -435,18 +429,14 @@ class BinanceOrderBookData(msgspec.Struct, frozen=True):
     ) -> OrderBookDeltas:
         ts_event: int = millis_to_nanos(self.T)
         bids: list[BookOrder] = [
-            BookOrder(OrderSide.BUY, Price.from_str(o.price), Quantity.from_str(o.size), 0)
-            for o in self.b
+            BookOrder(OrderSide.BUY, Price.from_str(o.price), Quantity.from_str(o.size), 0) for o in self.b
         ]
         asks: list[BookOrder] = [
-            BookOrder(OrderSide.SELL, Price.from_str(o.price), Quantity.from_str(o.size), 0)
-            for o in self.a
+            BookOrder(OrderSide.SELL, Price.from_str(o.price), Quantity.from_str(o.size), 0) for o in self.a
         ]
 
         deltas = [OrderBookDelta.clear(instrument_id, ts_init, ts_event)]
-        deltas += [
-            OrderBookDelta(instrument_id, BookAction.ADD, o, ts_event, ts_init) for o in bids + asks
-        ]
+        deltas += [OrderBookDelta(instrument_id, BookAction.ADD, o, ts_event, ts_init) for o in bids + asks]
         return OrderBookDeltas(instrument_id=instrument_id, deltas=deltas)
 
 
