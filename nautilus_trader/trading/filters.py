@@ -447,9 +447,7 @@ class EconomicNewsEventFilter:
         self._unfiltered_data_start = news_data.index[0]
         self._unfiltered_data_end = news_data.index[-1]
 
-        self._news_data = news_data[
-            news_data["Currency"].isin(currencies) & news_data["Impact"].isin(impacts)
-        ]
+        self._news_data = news_data[news_data["Currency"].isin(currencies) & news_data["Impact"].isin(impacts)]
 
     @property
     def unfiltered_data_start(self):

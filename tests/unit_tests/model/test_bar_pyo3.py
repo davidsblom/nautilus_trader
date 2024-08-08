@@ -236,14 +236,8 @@ class TestBarSpecification:
         assert bar_spec.is_threshold_aggregated() == is_threshold_aggregated
         assert bar_spec.is_information_aggregated() == is_information_aggregated
         assert BarSpecification.check_time_aggregated(bar_spec.aggregation) == is_time_aggregated
-        assert (
-            BarSpecification.check_threshold_aggregated(bar_spec.aggregation)
-            == is_threshold_aggregated
-        )
-        assert (
-            BarSpecification.check_information_aggregated(bar_spec.aggregation)
-            == is_information_aggregated
-        )
+        assert BarSpecification.check_threshold_aggregated(bar_spec.aggregation) == is_threshold_aggregated
+        assert BarSpecification.check_information_aggregated(bar_spec.aggregation) == is_information_aggregated
 
     def test_properties(self):
         # Arrange, Act
@@ -535,13 +529,8 @@ class TestBar:
 
         # Act, Assert
         assert isinstance(hash(bar), int)
-        assert (
-            str(bar) == "AUD/USD.SIM-1-MINUTE-BID-EXTERNAL,1.00001,1.00004,1.00000,1.00003,100000,0"
-        )
-        assert (
-            repr(bar)
-            == "Bar(AUD/USD.SIM-1-MINUTE-BID-EXTERNAL,1.00001,1.00004,1.00000,1.00003,100000,0)"
-        )
+        assert str(bar) == "AUD/USD.SIM-1-MINUTE-BID-EXTERNAL,1.00001,1.00004,1.00000,1.00003,100000,0"
+        assert repr(bar) == "Bar(AUD/USD.SIM-1-MINUTE-BID-EXTERNAL,1.00001,1.00004,1.00000,1.00003,100000,0)"
 
     def test_is_single_price(self):
         # Arrange

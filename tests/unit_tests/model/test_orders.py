@@ -149,10 +149,7 @@ class TestOrders:
         )
 
         # Act, Assert
-        assert (
-            order.would_reduce_only(position_side=position_side, position_qty=position_qty)
-            == expected
-        )
+        assert order.would_reduce_only(position_side=position_side, position_qty=position_qty) == expected
 
     def test_market_order_with_quantity_zero_raises_value_error(self):
         # Arrange, Act, Assert

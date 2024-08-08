@@ -187,8 +187,7 @@ class BacktestNode:
                 instrument_id: InstrumentId = data_config.instrument_id
                 if instrument_id.venue not in venue_ids:
                     raise InvalidConfiguration(
-                        f"Venue '{instrument_id.venue}' for {instrument_id} "
-                        f"does not have a `BacktestVenueConfig`",
+                        f"Venue '{instrument_id.venue}' for {instrument_id} " f"does not have a `BacktestVenueConfig`",
                     )
 
             for venue_config in config.venues:
@@ -230,9 +229,7 @@ class BacktestNode:
         for config in venue_configs:
             base_currency: str | None = config.base_currency
             leverages = (
-                {InstrumentId.from_str(i): Decimal(v) for i, v in config.leverages.items()}
-                if config.leverages
-                else {}
+                {InstrumentId.from_str(i): Decimal(v) for i, v in config.leverages.items()} if config.leverages else {}
             )
 
             engine.add_venue(
@@ -333,9 +330,7 @@ class BacktestNode:
                 bar_type = None
             session = catalog.backend_session(
                 data_cls=config.data_type,
-                instrument_ids=(
-                    [config.instrument_id] if config.instrument_id and not bar_type else []
-                ),
+                instrument_ids=([config.instrument_id] if config.instrument_id and not bar_type else []),
                 bar_types=[bar_type] if bar_type else [],
                 start=config.start_time,
                 end=config.end_time,
@@ -403,11 +398,7 @@ class BacktestNode:
     def load_data_config(cls, config: BacktestDataConfig) -> CatalogDataResult:
         catalog: ParquetDataCatalog = cls.load_catalog(config)
 
-        instruments = (
-            catalog.instruments(instrument_ids=[config.instrument_id])
-            if config.instrument_id
-            else None
-        )
+        instruments = catalog.instruments(instrument_ids=[config.instrument_id]) if config.instrument_id else None
         if config.instrument_id and not instruments:
             return CatalogDataResult(data_cls=config.data_type, data=[])
 

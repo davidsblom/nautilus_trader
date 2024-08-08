@@ -239,8 +239,7 @@ class BybitDataClient(LiveMarketDataClient):
         try:
             while True:
                 self._log.debug(
-                    f"Scheduled `update_instruments` to run in "
-                    f"{self._update_instrument_interval}s",
+                    f"Scheduled `update_instruments` to run in " f"{self._update_instrument_interval}s",
                 )
                 await asyncio.sleep(self._update_instrument_interval)
                 await self._instrument_provider.load_all_async()
@@ -310,10 +309,7 @@ class BybitDataClient(LiveMarketDataClient):
         await ws_client.subscribe_order_book(bybit_symbol.raw_symbol, depth=depth)
 
     def _is_subscribed_to_order_book(self, instrument_id: InstrumentId) -> bool:
-        return (
-            instrument_id
-            in self.subscribed_order_book_snapshots() + self.subscribed_order_book_deltas()
-        )
+        return instrument_id in self.subscribed_order_book_snapshots() + self.subscribed_order_book_deltas()
 
     async def _subscribe_quote_ticks(self, instrument_id: InstrumentId) -> None:
         bybit_symbol = BybitSymbol(instrument_id.symbol.value)
@@ -501,8 +497,7 @@ class BybitDataClient(LiveMarketDataClient):
 
         if bar_type.is_internally_aggregated():
             self._log.error(
-                f"Cannot request {bar_type}: "
-                f"only historical bars with EXTERNAL aggregation available from Bybit",
+                f"Cannot request {bar_type}: " f"only historical bars with EXTERNAL aggregation available from Bybit",
             )
             return
 
@@ -514,8 +509,7 @@ class BybitDataClient(LiveMarketDataClient):
 
         if bar_type.spec.price_type != PriceType.LAST:
             self._log.error(
-                f"Cannot request {bar_type}: "
-                f"only historical bars for LAST price type available from Bybit",
+                f"Cannot request {bar_type}: " f"only historical bars for LAST price type available from Bybit",
             )
             return
 

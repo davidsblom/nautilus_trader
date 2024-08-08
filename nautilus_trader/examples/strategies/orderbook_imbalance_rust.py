@@ -177,9 +177,7 @@ class OrderBookImbalance(Strategy):
         self.log.info(
             f"Book: {self.book.best_bid_price()} @ {self.book.best_ask_price()} ({ratio=:0.2f})",
         )
-        seconds_since_last_trigger = (
-            self.clock.utc_now() - self._last_trigger_timestamp
-        ).total_seconds()
+        seconds_since_last_trigger = (self.clock.utc_now() - self._last_trigger_timestamp).total_seconds()
 
         if larger > self.trigger_min_size and ratio < self.trigger_imbalance_ratio:
             self.log.info(

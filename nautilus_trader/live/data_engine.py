@@ -249,8 +249,7 @@ class LiveDataEngine(DataEngine):
             self._loop.call_soon_threadsafe(self._cmd_queue.put_nowait, command)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_cmd_queue.put` as queue full at "
-                f"{self._cmd_queue.qsize()} items",
+                f"Blocking on `_cmd_queue.put` as queue full at " f"{self._cmd_queue.qsize()} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._cmd_queue.put(command))
@@ -280,8 +279,7 @@ class LiveDataEngine(DataEngine):
             self._loop.call_soon_threadsafe(self._req_queue.put_nowait, request)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_req_queue.put` as queue full at "
-                f"{self._req_queue.qsize()} items",
+                f"Blocking on `_req_queue.put` as queue full at " f"{self._req_queue.qsize()} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._req_queue.put(request))
@@ -311,8 +309,7 @@ class LiveDataEngine(DataEngine):
             self._loop.call_soon_threadsafe(self._res_queue.put_nowait, response)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_res_queue.put` as queue full at "
-                f"{self._res_queue.qsize():_} items",
+                f"Blocking on `_res_queue.put` as queue full at " f"{self._res_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._res_queue.put(response))
@@ -342,8 +339,7 @@ class LiveDataEngine(DataEngine):
             self._loop.call_soon_threadsafe(self._data_queue.put_nowait, data)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_data_queue.put` as queue full at "
-                f"{self._data_queue.qsize():_} items",
+                f"Blocking on `_data_queue.put` as queue full at " f"{self._data_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._data_queue.put(data))

@@ -313,12 +313,8 @@ def runner_change_to_order_book_snapshot(
     Convert a RunnerChange to a OrderBookDeltas snapshot.
     """
     # Check for incorrect data types
-    assert not (
-        rc.bdatb or rc.bdatl
-    ), "Incorrect orderbook data found (best display), should only be `atb` and `atl`"
-    assert not (
-        rc.batb or rc.batl
-    ), "Incorrect orderbook data found (best) should only be `atb` and `atl`"
+    assert not (rc.bdatb or rc.bdatl), "Incorrect orderbook data found (best display), should only be `atb` and `atl`"
+    assert not (rc.batb or rc.batl), "Incorrect orderbook data found (best) should only be `atb` and `atl`"
 
     deltas: list[OrderBookDelta] = [
         OrderBookDelta(
@@ -406,12 +402,8 @@ def runner_change_to_order_book_deltas(
     """
     Convert a RunnerChange to a list of OrderBookDeltas.
     """
-    assert not (
-        rc.bdatb or rc.bdatl
-    ), "Incorrect orderbook data found (best display), should only be `atb` and `atl`"
-    assert not (
-        rc.batb or rc.batl
-    ), "Incorrect orderbook data found (best) should only be `atb` and `atl`"
+    assert not (rc.bdatb or rc.bdatl), "Incorrect orderbook data found (best display), should only be `atb` and `atl`"
+    assert not (rc.batb or rc.batl), "Incorrect orderbook data found (best) should only be `atb` and `atl`"
 
     deltas: list[OrderBookDelta] = []
 
@@ -522,10 +514,7 @@ def runner_change_to_bsp_order_book_deltas(
             )
             deltas.append(delta)
 
-    return [
-        CustomData(DataType(BSPOrderBookDelta, {"instrument_id": instrument_id}), delta)
-        for delta in deltas
-    ]
+    return [CustomData(DataType(BSPOrderBookDelta, {"instrument_id": instrument_id}), delta) for delta in deltas]
 
 
 def _merge_order_book_deltas(all_deltas: list[OrderBookDeltas]):

@@ -172,8 +172,7 @@ class LiveRiskEngine(RiskEngine):
             self._loop.call_soon_threadsafe(self._cmd_queue.put_nowait, command)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_cmd_queue.put` as queue full "
-                f"at {self._cmd_queue.qsize():_} items",
+                f"Blocking on `_cmd_queue.put` as queue full " f"at {self._cmd_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._cmd_queue.put(command))
@@ -203,8 +202,7 @@ class LiveRiskEngine(RiskEngine):
             self._loop.call_soon_threadsafe(self._evt_queue.put_nowait, event)
         except asyncio.QueueFull:
             self._log.warning(
-                f"Blocking on `_evt_queue.put` as queue full "
-                f"at {self._evt_queue.qsize():_} items",
+                f"Blocking on `_evt_queue.put` as queue full " f"at {self._evt_queue.qsize():_} items",
             )
             # Schedule the `put` operation to be executed once there is space in the queue
             self._loop.create_task(self._evt_queue.put(event))

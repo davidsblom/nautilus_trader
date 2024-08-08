@@ -259,10 +259,7 @@ class TestCommands:
 
         # Act, Assert
         assert CancelOrder.from_dict(CancelOrder.to_dict(command)) == command
-        assert (
-            str(command)
-            == "CancelOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001)"
-        )
+        assert str(command) == "CancelOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001)"
         assert (
             repr(command)
             == f"CancelOrder(client_id=SIM, trader_id=TRADER-001, strategy_id=S-001, instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001, command_id={uuid}, ts_init=0)"  # noqa
@@ -284,10 +281,7 @@ class TestCommands:
 
         # Act, Assert
         assert CancelOrder.from_dict(CancelOrder.to_dict(command)) == command
-        assert (
-            str(command)
-            == "CancelOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None)"
-        )
+        assert str(command) == "CancelOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None)"
         assert (
             repr(command)
             == f"CancelOrder(client_id=SIM, trader_id=TRADER-001, strategy_id=S-001, instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None, command_id={uuid}, ts_init=0)"  # noqa
@@ -308,9 +302,7 @@ class TestCommands:
 
         # Act, Assert
         assert CancelAllOrders.from_dict(CancelAllOrders.to_dict(command)) == command
-        assert (
-            str(command) == "CancelAllOrders(instrument_id=AUD/USD.SIM, order_side=NO_ORDER_SIDE)"
-        )
+        assert str(command) == "CancelAllOrders(instrument_id=AUD/USD.SIM, order_side=NO_ORDER_SIDE)"
         assert (
             repr(command)
             == f"CancelAllOrders(client_id=None, trader_id=TRADER-001, strategy_id=S-001, instrument_id=AUD/USD.SIM, order_side=NO_ORDER_SIDE, command_id={uuid}, ts_init=0)"  # noqa
@@ -388,10 +380,7 @@ class TestCommands:
 
         # Act, Assert
         assert QueryOrder.from_dict(QueryOrder.to_dict(command)) == command
-        assert (
-            str(command)
-            == "QueryOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001)"
-        )
+        assert str(command) == "QueryOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001)"
         assert (
             repr(command)
             == f"QueryOrder(client_id=SIM, trader_id=TRADER-001, strategy_id=S-001, instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=001, command_id={uuid}, ts_init=0)"  # noqa
@@ -413,10 +402,7 @@ class TestCommands:
 
         # Act, Assert
         assert QueryOrder.from_dict(QueryOrder.to_dict(command)) == command
-        assert (
-            str(command)
-            == "QueryOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None)"
-        )
+        assert str(command) == "QueryOrder(instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None)"
         assert (
             repr(command)
             == f"QueryOrder(client_id=SIM, trader_id=TRADER-001, strategy_id=S-001, instrument_id=AUD/USD.SIM, client_order_id=O-123456, venue_order_id=None, command_id={uuid}, ts_init=0)"  # noqa

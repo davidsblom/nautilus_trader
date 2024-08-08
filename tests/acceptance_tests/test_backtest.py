@@ -656,14 +656,9 @@ class TestBacktestAcceptanceTestsOrderBookImbalance:
         assert instruments
 
         for instrument in instruments[:1]:
-            trade_ticks = [
-                d for d in data if isinstance(d, TradeTick) and d.instrument_id == instrument.id
-            ]
+            trade_ticks = [d for d in data if isinstance(d, TradeTick) and d.instrument_id == instrument.id]
             order_book_deltas = [
-                d
-                for d in data
-                if isinstance(d, OrderBookDelta | OrderBookDeltas)
-                and d.instrument_id == instrument.id
+                d for d in data if isinstance(d, OrderBookDelta | OrderBookDeltas) and d.instrument_id == instrument.id
             ]
             self.engine.add_instrument(instrument)
             self.engine.add_data(trade_ticks)
@@ -714,14 +709,9 @@ class TestBacktestAcceptanceTestsMarketMaking:
         instruments = [d for d in data if isinstance(d, BettingInstrument)]
 
         for instrument in instruments[:1]:
-            trade_ticks = [
-                d for d in data if isinstance(d, TradeTick) and d.instrument_id == instrument.id
-            ]
+            trade_ticks = [d for d in data if isinstance(d, TradeTick) and d.instrument_id == instrument.id]
             order_book_deltas = [
-                d
-                for d in data
-                if isinstance(d, OrderBookDelta | OrderBookDeltas)
-                and d.instrument_id == instrument.id
+                d for d in data if isinstance(d, OrderBookDelta | OrderBookDeltas) and d.instrument_id == instrument.id
             ]
             self.engine.add_instrument(instrument)
             self.engine.add_data(trade_ticks)

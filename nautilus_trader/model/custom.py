@@ -125,10 +125,7 @@ def customdataclass(*args, **kwargs):  # noqa: C901 (too complex)
             }
 
             cls._schema = pa.schema(
-                {
-                    attr: type_mapping[cls.__annotations__[attr].__name__]
-                    for attr in cls.__annotations__
-                }
+                {attr: type_mapping[cls.__annotations__[attr].__name__] for attr in cls.__annotations__}
                 | {
                     "ts_event": pa.int64(),
                     "ts_init": pa.int64(),

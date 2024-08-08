@@ -912,10 +912,7 @@ class TestPosition:
         assert position.quantity == Quantity.from_int(19)
         assert position.realized_pnl == Money(36.16858966, USDT)
         assert position.avg_px_open == 99.98003629764065
-        assert (
-            repr(position)
-            == "Position(LONG 19.00000 ETHUSDT.BINANCE, id=P-19700101-000000-000-001-1)"
-        )
+        assert repr(position) == "Position(LONG 19.00000 ETHUSDT.BINANCE, id=P-19700101-000000-000-001-1)"
 
     def test_position_closed_and_reopened(self) -> None:
         # Arrange
@@ -1100,10 +1097,7 @@ class TestPosition:
         assert position.quantity == Quantity.from_int(19)
         assert position.realized_pnl == Money(-415.27137481, USDT)
         assert position.avg_px_open == 9999.88155922039
-        assert (
-            repr(position)
-            == "Position(LONG 19.000000 BTCUSDT.BINANCE, id=P-19700101-000000-000-001-1)"
-        )
+        assert repr(position) == "Position(LONG 19.000000 BTCUSDT.BINANCE, id=P-19700101-000000-000-001-1)"
 
     def test_calculate_pnl_when_given_position_side_flat_returns_zero(self) -> None:
         # Arrange

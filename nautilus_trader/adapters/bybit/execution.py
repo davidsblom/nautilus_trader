@@ -257,9 +257,7 @@ class BybitExecutionClient(LiveExecutionClient):
                         bybit_order.symbol + f"-{product_type.value.upper()}",
                     )
 
-                    client_order_id = (
-                        ClientOrderId(bybit_order.orderLinkId) if bybit_order.orderLinkId else None
-                    )
+                    client_order_id = ClientOrderId(bybit_order.orderLinkId) if bybit_order.orderLinkId else None
                     if client_order_id is None:
                         client_order_id = self._cache.client_order_id(
                             VenueOrderId(bybit_order.orderId),
@@ -877,9 +875,7 @@ class BybitExecutionClient(LiveExecutionClient):
             trigger_direction = BybitTriggerDirection.NONE
             if execution.stopOrderType != BybitStopOrderType.NONE:
                 trigger_direction = (
-                    BybitTriggerDirection.RISES_TO
-                    if order_side == OrderSide.SELL
-                    else BybitTriggerDirection.FALLS_TO
+                    BybitTriggerDirection.RISES_TO if order_side == OrderSide.SELL else BybitTriggerDirection.FALLS_TO
                 )
 
             order_type = self._enum_parser.parse_bybit_order_type(
@@ -909,9 +905,7 @@ class BybitExecutionClient(LiveExecutionClient):
             last_px=Price(float(execution.execPrice), instrument.price_precision),
             quote_currency=instrument.quote_currency,
             commission=Money(Decimal(execution.execFee), instrument.quote_currency),
-            liquidity_side=(
-                LiquiditySide.MAKER if order_type == OrderType.LIMIT else LiquiditySide.TAKER
-            ),
+            liquidity_side=(LiquiditySide.MAKER if order_type == OrderType.LIMIT else LiquiditySide.TAKER),
             ts_event=millis_to_nanos(float(execution.execTime)),
         )
 
@@ -923,19 +917,14 @@ class BybitExecutionClient(LiveExecutionClient):
                     bybit_order.symbol,
                     bybit_order.category,
                 )
-                client_order_id = (
-                    ClientOrderId(bybit_order.orderLinkId) if bybit_order.orderLinkId else None
-                )
+                client_order_id = ClientOrderId(bybit_order.orderLinkId) if bybit_order.orderLinkId else None
                 venue_order_id = VenueOrderId(bybit_order.orderId)
                 if client_order_id is None:
                     client_order_id = self._cache.client_order_id(venue_order_id)
 
                 order_side = self._enum_parser.parse_bybit_order_side(bybit_order.side)
 
-                if (
-                    client_order_id is None
-                    and bybit_order.stopOrderType == BybitStopOrderType.TRAILING_STOP
-                ):
+                if client_order_id is None and bybit_order.stopOrderType == BybitStopOrderType.TRAILING_STOP:
                     for order in self._pending_trailing_stops.values():
                         if order.instrument_id != instrument_id or order.side != order_side:
                             continue
@@ -1026,14 +1015,10 @@ class BybitExecutionClient(LiveExecutionClient):
                         venue_order_id=report.venue_order_id,
                         ts_event=report.ts_last,
                     )
-                elif (
-                    bybit_order.orderStatus == BybitOrderStatus.TRIGGERED
-                    and order.order_type
-                    not in (
-                        OrderType.MARKET_IF_TOUCHED,
-                        OrderType.STOP_MARKET,
-                        OrderType.TRAILING_STOP_MARKET,
-                    )
+                elif bybit_order.orderStatus == BybitOrderStatus.TRIGGERED and order.order_type not in (
+                    OrderType.MARKET_IF_TOUCHED,
+                    OrderType.STOP_MARKET,
+                    OrderType.TRAILING_STOP_MARKET,
                 ):
                     self.generate_order_triggered(
                         strategy_id=strategy_id,

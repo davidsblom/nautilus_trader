@@ -370,11 +370,7 @@ class InstrumentProviderConfig(NautilusConfig, frozen=True):
     """
 
     def __eq__(self, other):
-        return (
-            self.load_all == other.load_all
-            and self.load_ids == other.load_ids
-            and self.filters == other.filters
-        )
+        return self.load_all == other.load_all and self.load_ids == other.load_ids and self.filters == other.filters
 
     def __hash__(self):
         return hash((self.load_all, self.load_ids, self.filters))

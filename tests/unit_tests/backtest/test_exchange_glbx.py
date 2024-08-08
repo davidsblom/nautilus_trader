@@ -137,10 +137,7 @@ class TestSimulatedExchangeGlbx:
 
     def test_repr(self) -> None:
         # Arrange, Act, Assert
-        assert (
-            repr(self.exchange)
-            == "SimulatedExchange(id=GLBX, oms_type=HEDGING, account_type=MARGIN)"
-        )
+        assert repr(self.exchange) == "SimulatedExchange(id=GLBX, oms_type=HEDGING, account_type=MARGIN)"
 
     def test_process_order_within_expiration_submits(self) -> None:
         # Arrange: Prepare market
@@ -192,10 +189,7 @@ class TestSimulatedExchangeGlbx:
 
         # Assert
         assert order.status == OrderStatus.REJECTED
-        assert (
-            order.last_event.reason
-            == "Contract ESH4.GLBX not yet active, activation 2021-09-03T21:30:00.000Z"
-        )
+        assert order.last_event.reason == "Contract ESH4.GLBX not yet active, activation 2021-09-03T21:30:00.000Z"
 
     def test_process_order_after_expiration_rejects(self) -> None:
         # Arrange: Prepare market
@@ -224,10 +218,7 @@ class TestSimulatedExchangeGlbx:
         # Assert
         assert self.clock.timestamp_ns() == 1_710_513_000_000_000_001
         assert order.status == OrderStatus.REJECTED
-        assert (
-            order.last_event.reason
-            == "Contract ESH4.GLBX has expired, expiration 2024-03-15T14:30:00.000Z"
-        )
+        assert order.last_event.reason == "Contract ESH4.GLBX has expired, expiration 2024-03-15T14:30:00.000Z"
 
     def test_process_exchange_past_instrument_expiration_cancels_open_order(self) -> None:
         # Arrange: Prepare market

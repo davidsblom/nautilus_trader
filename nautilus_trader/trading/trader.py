@@ -318,8 +318,7 @@ class Trader(Component):
 
         if actor.id in self._actors:
             raise RuntimeError(
-                f"Already registered an actor with ID {actor.id}, "
-                "try specifying a different actor ID.",
+                f"Already registered an actor with ID {actor.id}, " "try specifying a different actor ID.",
             )
 
         clock = self._clock.__class__()  # Clock per component
@@ -384,8 +383,7 @@ class Trader(Component):
 
         if strategy.id in self._strategies:
             raise RuntimeError(
-                f"Already registered a strategy with ID {strategy.id}, "
-                "try specifying a different strategy ID.",
+                f"Already registered a strategy with ID {strategy.id}, " "try specifying a different strategy ID.",
             )
 
         # Confirm strategy ID

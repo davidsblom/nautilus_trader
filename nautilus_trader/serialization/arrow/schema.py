@@ -45,34 +45,19 @@ from nautilus_trader.model.events import OrderUpdated
 
 NAUTILUS_ARROW_SCHEMA = {
     OrderBookDelta: pa.schema(
-        [
-            pa.field(k, pa.type_for_alias(v), False)
-            for k, v in nautilus_pyo3.OrderBookDelta.get_fields().items()
-        ],
+        [pa.field(k, pa.type_for_alias(v), False) for k, v in nautilus_pyo3.OrderBookDelta.get_fields().items()],
     ),
     OrderBookDepth10: pa.schema(
-        [
-            pa.field(k, pa.type_for_alias(v), False)
-            for k, v in nautilus_pyo3.OrderBookDepth10.get_fields().items()
-        ],
+        [pa.field(k, pa.type_for_alias(v), False) for k, v in nautilus_pyo3.OrderBookDepth10.get_fields().items()],
     ),
     QuoteTick: pa.schema(
-        [
-            pa.field(k, pa.type_for_alias(v), False)
-            for k, v in nautilus_pyo3.QuoteTick.get_fields().items()
-        ],
+        [pa.field(k, pa.type_for_alias(v), False) for k, v in nautilus_pyo3.QuoteTick.get_fields().items()],
     ),
     TradeTick: pa.schema(
-        [
-            pa.field(k, pa.type_for_alias(v), False)
-            for k, v in nautilus_pyo3.TradeTick.get_fields().items()
-        ],
+        [pa.field(k, pa.type_for_alias(v), False) for k, v in nautilus_pyo3.TradeTick.get_fields().items()],
     ),
     Bar: pa.schema(
-        [
-            pa.field(k, pa.type_for_alias(v), False)
-            for k, v in nautilus_pyo3.Bar.get_fields().items()
-        ],
+        [pa.field(k, pa.type_for_alias(v), False) for k, v in nautilus_pyo3.Bar.get_fields().items()],
     ),
     InstrumentClose: pa.schema(
         {

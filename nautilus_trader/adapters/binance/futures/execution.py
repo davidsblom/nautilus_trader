@@ -144,8 +144,8 @@ class BinanceFuturesExecutionClient(BinanceCommonExecutionClient):
         )
 
     async def _update_account_state(self) -> None:
-        account_info: BinanceFuturesAccountInfo = (
-            await self._futures_http_account.query_futures_account_info(recv_window=str(5000))
+        account_info: BinanceFuturesAccountInfo = await self._futures_http_account.query_futures_account_info(
+            recv_window=str(5000),
         )
         if account_info.canTrade:
             self._log.info("Binance API key authenticated", LogColor.GREEN)

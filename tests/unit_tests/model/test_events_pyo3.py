@@ -155,10 +155,7 @@ def test_order_emulated():
     result_dict = OrderEmulated.to_dict(event)
     order_emulated = OrderEmulated.from_dict(result_dict)
     assert order_emulated == event
-    assert (
-        str(event)
-        == "OrderEmulated(instrument_id=ETHUSDT.BINANCE, client_order_id=O-20210410-022422-001-001-1)"
-    )
+    assert str(event) == "OrderEmulated(instrument_id=ETHUSDT.BINANCE, client_order_id=O-20210410-022422-001-001-1)"
     assert (
         repr(event)
         == "OrderEmulated(trader_id=TESTER-001, strategy_id=S-001, instrument_id=ETHUSDT.BINANCE, "

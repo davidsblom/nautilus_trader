@@ -152,9 +152,7 @@ class BinanceFuturesEnumParser(BinanceEnumParser):
             BinanceOrderType.TAKE_PROFIT_MARKET: OrderType.MARKET_IF_TOUCHED,
             BinanceOrderType.TRAILING_STOP_MARKET: OrderType.TRAILING_STOP_MARKET,
         }
-        self.futures_int_to_ext_order_type = {
-            b: a for a, b in self.futures_ext_to_int_order_type.items()
-        }
+        self.futures_int_to_ext_order_type = {b: a for a, b in self.futures_ext_to_int_order_type.items()}
 
         self.futures_valid_time_in_force = {
             TimeInForce.GTC,

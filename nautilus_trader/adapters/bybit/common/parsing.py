@@ -78,15 +78,13 @@ def get_interval_from_bar_type(bar_type: BarType) -> str:
         case BarAggregation.MINUTE:
             if bar_type.spec.step not in BYBIT_MINUTE_INTERVALS:
                 raise ValueError(
-                    f"Bybit only supports the following bar minute intervals: "
-                    f"{BYBIT_MINUTE_INTERVALS}",
+                    f"Bybit only supports the following bar minute intervals: " f"{BYBIT_MINUTE_INTERVALS}",
                 )
             return str(bar_type.spec.step)
         case BarAggregation.HOUR:
             if bar_type.spec.step not in BYBIT_HOUR_INTERVALS:
                 raise ValueError(
-                    f"Bybit only supports the following bar hour intervals: "
-                    f"{BYBIT_HOUR_INTERVALS}",
+                    f"Bybit only supports the following bar hour intervals: " f"{BYBIT_HOUR_INTERVALS}",
                 )
             return str(bar_type.spec.step * 60)
         case BarAggregation.DAY:

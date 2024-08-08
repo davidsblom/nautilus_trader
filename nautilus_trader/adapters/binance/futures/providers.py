@@ -155,15 +155,11 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
         self._log.info(f"Loading instruments {instrument_ids}{filters_str}.")
 
         # Extract all symbol strings
-        symbols = [
-            str(BinanceSymbol(instrument_id.symbol.value)) for instrument_id in instrument_ids
-        ]
+        symbols = [str(BinanceSymbol(instrument_id.symbol.value)) for instrument_id in instrument_ids]
 
         # Get exchange info for all assets
         exchange_info = await self._http_market.query_futures_exchange_info()
-        symbol_info_dict: dict[str, BinanceFuturesSymbolInfo] = {
-            info.symbol: info for info in exchange_info.symbols
-        }
+        symbol_info_dict: dict[str, BinanceFuturesSymbolInfo] = {info.symbol: info for info in exchange_info.symbols}
         account_info = await self._http_account.query_futures_account_info(recv_window=str(5000))
         fee_rates = self._fee_rates[account_info.feeTier]
 
@@ -197,9 +193,7 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
 
         # Get exchange info for all assets
         exchange_info = await self._http_market.query_futures_exchange_info()
-        symbol_info_dict: dict[str, BinanceFuturesSymbolInfo] = {
-            info.symbol: info for info in exchange_info.symbols
-        }
+        symbol_info_dict: dict[str, BinanceFuturesSymbolInfo] = {info.symbol: info for info in exchange_info.symbols}
 
         account_info = await self._http_account.query_futures_account_info(recv_window=str(5000))
         fee_rates = self._fee_rates[account_info.feeTier]
@@ -224,10 +218,7 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
     ) -> None:
         contract_type_str = symbol_info.contractType
 
-        if (
-            contract_type_str == ""
-            or symbol_info.status == BinanceFuturesContractStatus.PENDING_TRADING
-        ):
+        if contract_type_str == "" or symbol_info.status == BinanceFuturesContractStatus.PENDING_TRADING:
             self._log.debug(f"Instrument not yet defined: {symbol_info.symbol}")
             return  # Not yet defined
 
@@ -245,9 +236,7 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
             instrument_id = InstrumentId(symbol=nautilus_symbol, venue=self._venue)
 
             # Parse instrument filters
-            filters: dict[BinanceSymbolFilterType, BinanceSymbolFilter] = {
-                f.filterType: f for f in symbol_info.filters
-            }
+            filters: dict[BinanceSymbolFilterType, BinanceSymbolFilter] = {f.filterType: f for f in symbol_info.filters}
             price_filter: BinanceSymbolFilter = filters.get(BinanceSymbolFilterType.PRICE_FILTER)
             lot_size_filter: BinanceSymbolFilter = filters.get(BinanceSymbolFilterType.LOT_SIZE)
             min_notional_filter: BinanceSymbolFilter = filters.get(
@@ -268,11 +257,7 @@ class BinanceFuturesInstrumentProvider(InstrumentProvider):
             min_notional = None
             if filters.get(BinanceSymbolFilterType.MIN_NOTIONAL):
                 min_notional = Money(min_notional_filter.notional, currency=quote_currency)
-            max_notional = (
-                Money(position_risk.maxNotionalValue, currency=quote_currency)
-                if position_risk
-                else None
-            )
+            max_notional = Money(position_risk.maxNotionalValue, currency=quote_currency) if position_risk else None
             max_price = Price(float(price_filter.maxPrice), precision=price_precision)
             min_price = Price(float(price_filter.minPrice), precision=price_precision)
 

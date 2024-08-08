@@ -28,14 +28,8 @@ def test_account_balance_equality():
 
 def test_account_balance_display():
     account_balance = TestTypesProviderPyo3.account_balance()
-    assert (
-        str(account_balance)
-        == "AccountBalance(total=1525000.00 USD, locked=25000.00 USD, free=1500000.00 USD)"
-    )
-    assert (
-        repr(account_balance)
-        == "AccountBalance(total=1525000.00 USD, locked=25000.00 USD, free=1500000.00 USD)"
-    )
+    assert str(account_balance) == "AccountBalance(total=1525000.00 USD, locked=25000.00 USD, free=1500000.00 USD)"
+    assert repr(account_balance) == "AccountBalance(total=1525000.00 USD, locked=25000.00 USD, free=1500000.00 USD)"
 
 
 def test_account_balance_to_from_dict():
@@ -62,14 +56,8 @@ def test_margin_balance_equality():
 
 def test_margin_balance_display():
     margin_balance = TestTypesProviderPyo3.margin_balance()
-    assert (
-        str(margin_balance)
-        == "MarginBalance(initial=1.00 USD, maintenance=1.00 USD, instrument_id=AUD/USD.SIM)"
-    )
-    assert (
-        str(margin_balance)
-        == "MarginBalance(initial=1.00 USD, maintenance=1.00 USD, instrument_id=AUD/USD.SIM)"
-    )
+    assert str(margin_balance) == "MarginBalance(initial=1.00 USD, maintenance=1.00 USD, instrument_id=AUD/USD.SIM)"
+    assert str(margin_balance) == "MarginBalance(initial=1.00 USD, maintenance=1.00 USD, instrument_id=AUD/USD.SIM)"
 
 
 def test_margin_balance_to_from_dict():

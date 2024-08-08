@@ -176,9 +176,7 @@ class InteractiveBrokersClientOrderMixin(BaseMixin):
             request.result.append(order)
             # Validate and add reverse mapping, if not exists
             if order_ref := self._order_id_to_order_ref.get(order.orderId):
-                if not (
-                    order_ref.account_id == order.account and order_ref.order_id == order.orderRef
-                ):
+                if not (order_ref.account_id == order.account and order_ref.order_id == order.orderRef):
                     self._log.warning(
                         f"Discrepancy found in order, expected {order_ref}, "
                         f"was (account={order.account}, order_id={order.orderRef}",

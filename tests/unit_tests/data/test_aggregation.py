@@ -71,14 +71,8 @@ class TestBarBuilder:
         builder = BarBuilder(BTCUSDT_BINANCE, bar_type)
 
         # Act, Assert
-        assert (
-            str(builder)
-            == "BarBuilder(BTCUSDT.BINANCE-100-TICK-LAST-EXTERNAL,None,None,None,None,0.000000)"
-        )
-        assert (
-            repr(builder)
-            == "BarBuilder(BTCUSDT.BINANCE-100-TICK-LAST-EXTERNAL,None,None,None,None,0.000000)"
-        )
+        assert str(builder) == "BarBuilder(BTCUSDT.BINANCE-100-TICK-LAST-EXTERNAL,None,None,None,None,0.000000)"
+        assert repr(builder) == "BarBuilder(BTCUSDT.BINANCE-100-TICK-LAST-EXTERNAL,None,None,None,None,0.000000)"
 
     def test_set_partial_updates_bar_to_expected_properties(self):
         # Arrange

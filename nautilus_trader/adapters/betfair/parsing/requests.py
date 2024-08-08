@@ -99,11 +99,7 @@ def nautilus_limit_to_place_instructions(
     instructions = PlaceInstruction(
         order_type=OrderType.LIMIT,
         selection_id=int(instrument.selection_id),
-        handicap=(
-            instrument.selection_handicap
-            if instrument.selection_handicap != null_handicap()
-            else None
-        ),
+        handicap=(instrument.selection_handicap if instrument.selection_handicap != null_handicap() else None),
         side=OrderSideParser.to_betfair(command.order.side),
         limit_order=LimitOrder(
             price=command.order.price.as_double(),
@@ -129,11 +125,7 @@ def nautilus_limit_on_close_to_place_instructions(
     instructions = PlaceInstruction(
         order_type=OrderType.LIMIT_ON_CLOSE,
         selection_id=int(instrument.selection_id),
-        handicap=(
-            instrument.selection_handicap
-            if instrument.selection_handicap != null_handicap()
-            else None
-        ),
+        handicap=(instrument.selection_handicap if instrument.selection_handicap != null_handicap() else None),
         side=OrderSideParser.to_betfair(command.order.side),
         limit_on_close_order=LimitOnCloseOrder(
             price=command.order.price.as_double(),
@@ -155,11 +147,7 @@ def nautilus_market_to_place_instructions(
     instructions = PlaceInstruction(
         order_type=OrderType.LIMIT,
         selection_id=int(instrument.selection_id),
-        handicap=(
-            instrument.selection_handicap
-            if instrument.selection_handicap != null_handicap()
-            else None
-        ),
+        handicap=(instrument.selection_handicap if instrument.selection_handicap != null_handicap() else None),
         side=OrderSideParser.to_betfair(command.order.side),
         limit_order=LimitOrder(
             price=price.as_double(),
@@ -185,11 +173,7 @@ def nautilus_market_on_close_to_place_instructions(
     instructions = PlaceInstruction(
         order_type=OrderType.MARKET_ON_CLOSE,
         selection_id=int(instrument.selection_id),
-        handicap=(
-            instrument.selection_handicap
-            if instrument.selection_handicap != null_handicap()
-            else None
-        ),
+        handicap=(instrument.selection_handicap if instrument.selection_handicap != null_handicap() else None),
         side=OrderSideParser.to_betfair(command.order.side),
         market_on_close_order=MarketOnCloseOrder(
             liability=command.order.quantity.as_double(),
@@ -390,9 +374,7 @@ def bet_to_order_status_report(
         qty = Quantity(order.price_size.size, BETFAIR_QUANTITY_PRECISION)
         fill_qty = Quantity(order.size_matched, BETFAIR_QUANTITY_PRECISION)
     elif order.bsp_liability != 0.0:
-        size = (
-            order.bsp_liability / order if order.side == BetOrderSide.BACK else order.bsp_liability
-        )
+        size = order.bsp_liability / order if order.side == BetOrderSide.BACK else order.bsp_liability
         qty = Quantity(size, BETFAIR_QUANTITY_PRECISION)
         fill_qty = Quantity(size, BETFAIR_QUANTITY_PRECISION)
     else:

@@ -436,9 +436,7 @@ class PositionStatusReport(ExecutionReport):
         self.position_side = position_side
         self.quantity = quantity
         self.signed_decimal_qty = (
-            -self.quantity.as_decimal()
-            if position_side == PositionSide.SHORT
-            else self.quantity.as_decimal()
+            -self.quantity.as_decimal() if position_side == PositionSide.SHORT else self.quantity.as_decimal()
         )
         self.ts_last = ts_last
 

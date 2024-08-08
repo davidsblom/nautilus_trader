@@ -119,10 +119,7 @@ class BybitOrder(msgspec.Struct, omit_defaults=True, kw_only=True):
 
         # TODO: Temporary and shouldn't be necessary
         avg_px = Decimal(self.avgPrice) if self.avgPrice else None
-        if (
-            order_status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED)
-            and self.avgPrice is None
-        ):
+        if order_status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED) and self.avgPrice is None:
             avg_px = Decimal()
 
         return OrderStatusReport(

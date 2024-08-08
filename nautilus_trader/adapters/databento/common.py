@@ -67,6 +67,5 @@ def databento_schema_from_nautilus_bar_type(bar_type: BarType) -> DatabentoSchem
             return DatabentoSchema.OHLCV_1D
         case _:
             raise ValueError(
-                f"Invalid bar type '{bar_type}'. "
-                "Use any of ['SECOND', 'MINTUE', 'HOUR', 'DAY'] time aggregations.",
+                f"Invalid bar type '{bar_type}'. " "Use any of ['SECOND', 'MINTUE', 'HOUR', 'DAY'] time aggregations.",
             )

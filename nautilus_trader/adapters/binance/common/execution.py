@@ -290,8 +290,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
         try:
             while True:
                 self._log.debug(
-                    f"Scheduled `ping_listen_keys` to run in "
-                    f"{self._ping_listen_keys_interval}s",
+                    f"Scheduled `ping_listen_keys` to run in " f"{self._ping_listen_keys_interval}s",
                 )
                 await asyncio.sleep(self._ping_listen_keys_interval)
                 if self._listen_key:
@@ -350,9 +349,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
             else:
                 binance_order = await self._http_account.query_order(
                     symbol=instrument_id.symbol.value,
-                    orig_client_order_id=(
-                        client_order_id.value if client_order_id is not None else None
-                    ),
+                    orig_client_order_id=(client_order_id.value if client_order_id is not None else None),
                 )
         except BinanceError as e:
             retries += 1
@@ -565,11 +562,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
         raise NotImplementedError
 
     def _should_retry(self, error_code: BinanceErrorCode, retries: int) -> bool:
-        if (
-            error_code not in self._retry_errors
-            or not self._max_retries
-            or retries > self._max_retries
-        ):
+        if error_code not in self._retry_errors or not self._max_retries or retries > self._max_retries:
             return False
         return True
 
@@ -851,8 +844,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
 
         if order.order_type != OrderType.LIMIT:
             self._log.error(
-                "Cannot modify order: "
-                f"only LIMIT orders supported by the venue (was {order.type_string()})",
+                "Cannot modify order: " f"only LIMIT orders supported by the venue (was {order.type_string()})",
             )
             return
 
@@ -969,10 +961,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
                 self._log.warning(f"Cancel rejected: {e.message}")
             else:
                 self._log.exception(
-                    f"Cannot cancel order "
-                    f"{client_order_id!r}, "
-                    f"{venue_order_id!r}: "
-                    f"{e.message}",
+                    f"Cannot cancel order " f"{client_order_id!r}, " f"{venue_order_id!r}: " f"{e.message}",
                     e,
                 )
 

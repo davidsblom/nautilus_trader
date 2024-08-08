@@ -41,9 +41,7 @@ class TestQuoteTick:
 
     def test_fully_qualified_name(self):
         # Arrange, Act, Assert
-        assert (
-            QuoteTick.fully_qualified_name() == "nautilus_trader.core.nautilus_pyo3.model:QuoteTick"
-        )
+        assert QuoteTick.fully_qualified_name() == "nautilus_trader.core.nautilus_pyo3.model:QuoteTick"
 
     def test_tick_hash_str_and_repr(self):
         # Arrange
@@ -202,9 +200,7 @@ class TestQuoteTick:
 class TestTradeTick:
     def test_fully_qualified_name(self):
         # Arrange, Act, Assert
-        assert (
-            TradeTick.fully_qualified_name() == "nautilus_trader.core.nautilus_pyo3.model:TradeTick"
-        )
+        assert TradeTick.fully_qualified_name() == "nautilus_trader.core.nautilus_pyo3.model:TradeTick"
 
     def test_hash_str_and_repr(self):
         # Arrange

@@ -291,12 +291,8 @@ class InteractiveBrokersExecutionClient(LiveExecutionClient):
         else:
             order_status = MAP_ORDER_STATUS[ib_order.order_state.status]
         ts_init = self._clock.timestamp_ns()
-        price = (
-            None if ib_order.lmtPrice == UNSET_DOUBLE else instrument.make_price(ib_order.lmtPrice)
-        )
-        expire_time = (
-            timestring_to_timestamp(ib_order.goodTillDate) if ib_order.tif == "GTD" else None
-        )
+        price = None if ib_order.lmtPrice == UNSET_DOUBLE else instrument.make_price(ib_order.lmtPrice)
+        expire_time = timestring_to_timestamp(ib_order.goodTillDate) if ib_order.tif == "GTD" else None
 
         mapped_order_type_info = ib_to_nautilus_order_type[ib_order.orderType]
         if isinstance(mapped_order_type_info, tuple):
@@ -805,8 +801,7 @@ class InteractiveBrokersExecutionClient(LiveExecutionClient):
                 )
         else:
             self._log.warning(
-                f"Order {order.client_order_id} with status={status.name} is unknown or "
-                "not yet implemented.",
+                f"Order {order.client_order_id} with status={status.name} is unknown or " "not yet implemented.",
             )
 
     async def handle_order_status_report(self, ib_order: IBOrder) -> None:
@@ -843,12 +838,8 @@ class InteractiveBrokersExecutionClient(LiveExecutionClient):
                 if order.totalQuantity == UNSET_DECIMAL
                 else Quantity.from_str(str(order.totalQuantity))
             )
-            price = (
-                None if order.lmtPrice == UNSET_DOUBLE else instrument.make_price(order.lmtPrice)
-            )
-            trigger_price = (
-                None if order.auxPrice == UNSET_DOUBLE else instrument.make_price(order.auxPrice)
-            )
+            price = None if order.lmtPrice == UNSET_DOUBLE else instrument.make_price(order.lmtPrice)
+            trigger_price = None if order.auxPrice == UNSET_DOUBLE else instrument.make_price(order.auxPrice)
             venue_order_id_modified = bool(
                 nautilus_order.venue_order_id is None
                 or nautilus_order.venue_order_id != VenueOrderId(str(order.orderId)),

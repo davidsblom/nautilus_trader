@@ -104,10 +104,7 @@ class TestDataMessage:
 
         # Assert
 
-        assert (
-            str(command)
-            == "Subscribe(client_id=None, venue=BINANCE, data_type=Data{'type': 'newswire'})"
-        )
+        assert str(command) == "Subscribe(client_id=None, venue=BINANCE, data_type=Data{'type': 'newswire'})"
         assert repr(command) == (
             f"Subscribe("
             f"client_id=None, "

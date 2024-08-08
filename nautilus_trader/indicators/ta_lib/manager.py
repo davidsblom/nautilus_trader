@@ -174,8 +174,7 @@ class TAFunctionWrapper:
                 name = func_name
 
         param_values = [
-            float(num) if "." in num else int(num)
-            for num in taf_params_re.findall(value.replace(name, ""))
+            float(num) if "." in num else int(num) for num in taf_params_re.findall(value.replace(name, ""))
         ]
 
         fn = abstract.Function(name)
@@ -210,9 +209,7 @@ class TAFunctionWrapper:
 
         """
         return tuple(
-            cls.from_str(indicator)
-            for indicator in indicators
-            if indicator not in talib_indicator_manager_input_names
+            cls.from_str(indicator) for indicator in indicators if indicator not in talib_indicator_manager_input_names
         )
 
 

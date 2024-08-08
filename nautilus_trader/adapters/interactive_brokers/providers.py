@@ -58,9 +58,7 @@ class InteractiveBrokersInstrumentProvider(InstrumentProvider):
         super().__init__(config=config)
 
         # Settings
-        self._load_contracts_on_start = (
-            set(config.load_contracts) if config.load_contracts is not None else None
-        )
+        self._load_contracts_on_start = set(config.load_contracts) if config.load_contracts is not None else None
         self._min_expiry_days = config.min_expiry_days
         self._max_expiry_days = config.max_expiry_days
         self._build_options_chain = config.build_options_chain
@@ -94,16 +92,12 @@ class InteractiveBrokersInstrumentProvider(InstrumentProvider):
         # Parse and load InstrumentIds
         if self._load_ids_on_start:
             for instrument_id in [
-                (InstrumentId.from_str(i) if isinstance(i, str) else i)
-                for i in self._load_ids_on_start
+                (InstrumentId.from_str(i) if isinstance(i, str) else i) for i in self._load_ids_on_start
             ]:
                 await self.load_async(instrument_id)
         # Load IBContracts
         if self._load_contracts_on_start:
-            for contract in [
-                (IBContract(**c) if isinstance(c, dict) else c)
-                for c in self._load_contracts_on_start
-            ]:
+            for contract in [(IBContract(**c) if isinstance(c, dict) else c) for c in self._load_contracts_on_start]:
                 await self.load_async(contract)
 
     async def get_contract_details(
@@ -132,11 +126,7 @@ class InteractiveBrokersInstrumentProvider(InstrumentProvider):
             days=(contract.max_expiry_days or self._max_expiry_days or 90),
         )
 
-        if (
-            contract.secType in ["FUT", "CONTFUT"]
-            and contract.build_futures_chain
-            or self._build_futures_chain
-        ):
+        if contract.secType in ["FUT", "CONTFUT"] and contract.build_futures_chain or self._build_futures_chain:
             # Return Underlying contract details with Future Chains
             details = await self.get_future_chain_details(
                 underlying=qualified.contract,
@@ -155,11 +145,7 @@ class InteractiveBrokersInstrumentProvider(InstrumentProvider):
             )
             self._log.debug(f"Got {details=}")
 
-        if (
-            contract.secType in ["STK", "FUT", "IND"]
-            and contract.build_options_chain
-            or self._build_options_chain
-        ):
+        if contract.secType in ["STK", "FUT", "IND"] and contract.build_options_chain or self._build_options_chain:
             # Return Underlying contract details with Option Chains, including for the Future Chains if apply
             for detail in set(details):
                 if contract.lastTradeDateOrContractMonth:
@@ -207,9 +193,7 @@ class InteractiveBrokersInstrumentProvider(InstrumentProvider):
 
         details = []
         for chain in filtered_chains:
-            expirations = sorted(
-                exp for exp in chain[1] if (min_expiry <= pd.Timestamp(exp) <= max_expiry)
-            )
+            expirations = sorted(exp for exp in chain[1] if (min_expiry <= pd.Timestamp(exp) <= max_expiry))
             for expiration in expirations:
                 option_contracts_detail = await self.get_option_chain_details_by_expiry(
                     underlying=underlying,
