@@ -23,6 +23,7 @@ from typing import Any
 import msgspec
 
 from nautilus_trader.adapters.dydx.common.enums import DYDXCandlesResolution
+from nautilus_trader.adapters.dydx.schemas.ws import DYDXWsMessageGeneral
 from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import Logger
 from nautilus_trader.common.enums import LogColor
@@ -66,6 +67,11 @@ class DYDXWebsocketClient:
         self._client: WebSocketClient | None = None
         self._is_running = False
         self._subscriptions: set[tuple[str, str]] = set()
+        self._is_connected = False
+        self._previous_message_id: int | None = None
+        self._connection_id: str | None = None
+
+        self._decoder_ws_msg_general = msgspec.json.Decoder(DYDXWsMessageGeneral)
 
     @property
     def subscriptions(self) -> set[tuple[str, str]]:
@@ -88,7 +94,7 @@ class DYDXWebsocketClient:
         self._log.debug(f"Connecting to {self._base_url} websocket stream")
         config = WebSocketConfig(
             url=self._base_url,
-            handler=self._handler,
+            handler=self._handle_ws_message,
             heartbeat=10,
             headers=[],
             ping_handler=self._handle_ping,
@@ -98,7 +104,40 @@ class DYDXWebsocketClient:
             post_reconnection=self.reconnect,
         )
         self._client = client
+
         self._log.info(f"Connected to {self._base_url}", LogColor.BLUE)
+
+    def _handle_ws_message(self, raw: bytes) -> None:
+        """
+        Process every message and send to the DataClient.
+        """
+        try:
+            ws_message = self._decoder_ws_msg_general.decode(raw)
+
+            if ws_message.type == "connected":
+                self._log.info("Websocket connected")
+                self._connection_id = ws_message.connection_id
+            else:
+                self._handler(raw)
+
+            self._log.info(f"{ws_message.message_id=}")
+
+            if self._previous_message_id is not None and ws_message.message_id is not None:
+                message_id = int(ws_message.message_id)
+
+                if self._previous_message_id != message_id - 1:
+                    # Websocket message is lost.
+                    self._log.error(
+                        f"Inconsistent message ids ({self._previous_message_id} != {message_id - 1}). Resubscribe to subscriptions.",
+                    )
+                    # self._loop.create_task(self._resubscribe_all())
+
+            self._previous_message_id = (
+                int(ws_message.message_id) if ws_message.message_id is not None else None
+            )
+
+        except Exception as e:
+            self._log.error(f"Failed to parse websocket message: {raw.decode()} with error {e}")
 
     def _handle_ping(self, raw: bytes) -> None:
         self._loop.create_task(self.send_pong(raw))
@@ -117,6 +156,7 @@ class DYDXWebsocketClient:
         Reconnect the client to the server and resubscribe to all streams.
         """
         if not self._is_running:
+            self._log.error("Cannot subscribe to data streams. Not connected.")
             return
 
         self._log.warning(f"Reconnected to {self._base_url}")
@@ -333,6 +373,28 @@ class DYDXWebsocketClient:
         for subscription in self._subscriptions:
             msg = {"type": "subscribe", "channel": subscription[0], "id": subscription[1]}
             await self._send(msg)
+
+    async def _resubscribe_all(self) -> None:
+        """
+        Resubscribe to all previous subscriptions.
+        """
+        if self._client is None:
+            self._log.error("Cannot subscribe all: not connected")
+            return
+
+        for subscription in self._subscriptions:
+            if subscription[1]:
+                msg = {"type": "unsubscribe", "channel": subscription[0], "id": subscription[1]}
+            else:
+                msg = {"type": "unsubscribe", "channel": subscription[0]}
+
+            await self._send(msg)
+            await asyncio.sleep(1)
+
+        for subscription in self._subscriptions:
+            msg = {"type": "subscribe", "channel": subscription[0], "id": subscription[1]}
+            await self._send(msg)
+            await asyncio.sleep(1)
 
     async def _send(self, msg: dict[str, Any]) -> None:
         if self._client is None:
