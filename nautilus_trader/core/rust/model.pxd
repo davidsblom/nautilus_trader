@@ -618,25 +618,25 @@ cdef extern from "../includes/model.h":
         COMPOSITE,
 
     cdef struct Standard_Body:
-        # The bar types instrument ID.
+        # The bar type's instrument ID.
         InstrumentId_t instrument_id;
-        # The bar types specification.
+        # The bar type's specification.
         BarSpecification_t spec;
-        # The bar types aggregation source.
+        # The bar type's aggregation source.
         AggregationSource aggregation_source;
 
     cdef struct Composite_Body:
-        # The bar types instrument ID.
+        # The bar type's instrument ID.
         InstrumentId_t instrument_id;
-        # The bar types specification.
+        # The bar type's specification.
         BarSpecification_t spec;
-        # The bar types aggregation source.
+        # The bar type's aggregation source.
         AggregationSource aggregation_source;
         # The composite step for binning samples for bar aggregation.
         uintptr_t composite_step;
         # The composite type of bar aggregation.
         uint8_t composite_aggregation;
-        # The composite bar types aggregation source.
+        # The composite bar type's aggregation source.
         AggregationSource composite_aggregation_source;
 
     cdef struct BarType_t:
@@ -847,6 +847,7 @@ cdef extern from "../includes/model.h":
         # The currency denomination associated with the monetary amount.
         Currency_t currency;
 
+    # Represents a NULL book order (used with the `Clear` action or where an order is not specified).
     const BookOrder_t NULL_ORDER # = <BookOrder_t>{ OrderSide_NoOrderSide, <Price_t>{ 0, 0 }, <Quantity_t>{ 0, 0 }, 0 }
 
     # The sentinel `Price` representing errors (this will be removed when Cython is gone).

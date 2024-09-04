@@ -89,6 +89,12 @@ impl QuoteTick {
 
     /// Creates a new [`QuoteTick`] instance with correctness checking.
     ///
+    /// # Errors
+    ///
+    /// This function returns an error if:
+    /// - `bid_price.precision` does not equal `ask_price.precision`.
+    /// - `bid_size.precision` does not equal `ask_size.precision`.
+    ///
     /// # Notes
     ///
     /// PyO3 requires a `Result` type for proper error handling and stacktrace printing in Python.
@@ -106,15 +112,13 @@ impl QuoteTick {
             ask_price.precision,
             "bid_price.precision",
             "ask_price.precision",
-        )
-        .expect(FAILED);
+        )?;
         check_equal_u8(
             bid_size.precision,
             ask_size.precision,
             "bid_size.precision",
             "ask_size.precision",
-        )
-        .expect(FAILED);
+        )?;
         Ok(Self {
             instrument_id,
             bid_price,
@@ -153,6 +157,7 @@ impl QuoteTick {
         metadata
     }
 
+    /// Returns the [`Price`] for this quote depending on the given `price_type`.
     #[must_use]
     pub fn extract_price(&self, price_type: PriceType) -> Price {
         match price_type {
@@ -166,6 +171,7 @@ impl QuoteTick {
         }
     }
 
+    /// Returns the [`Quantity`] for this quote depending on the given `price_type`.
     #[must_use]
     pub fn extract_size(&self, price_type: PriceType) -> Quantity {
         match price_type {

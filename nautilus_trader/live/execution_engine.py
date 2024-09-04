@@ -731,10 +731,17 @@ class LiveExecutionEngine(ExecutionEngine):
             # state, or if commissions differed from the default.
             fill: OrderFilled = self._generate_inferred_fill(order, report, instrument)
             self._handle_event(fill)
-            assert report.filled_qty == order.filled_qty
+            if report.filled_qty != order.filled_qty:
+                self._log.error(
+                    f"report.filled_qty {report.filled_qty} != order.filled_qty {order.filled_qty}, "
+                    "this could potentially be caused by corrupted or incomplete cached state",
+                )
+                return False  # Failed
+
             if report.avg_px is not None and not math.isclose(report.avg_px, order.avg_px):
                 self._log.warning(
-                    f"report.avg_px {report.avg_px} != order.avg_px {order.avg_px}",
+                    f"report.avg_px {report.avg_px} != order.avg_px {order.avg_px}, "
+                    "this could potentially be caused by information loss due to inferred fills",
                 )
 
         return True  # Reconciled

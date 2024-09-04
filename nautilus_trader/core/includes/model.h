@@ -1124,30 +1124,30 @@ typedef enum BarType_t_Tag {
 
 typedef struct Standard_Body {
     /**
-     * The bar types instrument ID.
+     * The bar type's instrument ID.
      */
     struct InstrumentId_t instrument_id;
     /**
-     * The bar types specification.
+     * The bar type's specification.
      */
     struct BarSpecification_t spec;
     /**
-     * The bar types aggregation source.
+     * The bar type's aggregation source.
      */
     enum AggregationSource aggregation_source;
 } Standard_Body;
 
 typedef struct Composite_Body {
     /**
-     * The bar types instrument ID.
+     * The bar type's instrument ID.
      */
     struct InstrumentId_t instrument_id;
     /**
-     * The bar types specification.
+     * The bar type's specification.
      */
     struct BarSpecification_t spec;
     /**
-     * The bar types aggregation source.
+     * The bar type's aggregation source.
      */
     enum AggregationSource aggregation_source;
     /**
@@ -1159,7 +1159,7 @@ typedef struct Composite_Body {
      */
     uint8_t composite_aggregation;
     /**
-     * The composite bar types aggregation source.
+     * The composite bar type's aggregation source.
      */
     enum AggregationSource composite_aggregation_source;
 } Composite_Body;
@@ -1477,6 +1477,9 @@ typedef struct Money_t {
     struct Currency_t currency;
 } Money_t;
 
+/**
+ * Represents a NULL book order (used with the `Clear` action or where an order is not specified).
+ */
 #define NULL_ORDER (BookOrder_t){ .side = OrderSide_NoOrderSide, .price = (Price_t){ .raw = 0, .precision = 0 }, .size = (Quantity_t){ .raw = 0, .precision = 0 }, .order_id = 0 }
 
 /**

@@ -32,6 +32,8 @@ from nautilus_trader.adapters.bybit.common.enums import BybitTpSlMode
 from nautilus_trader.adapters.bybit.common.enums import BybitTriggerDirection
 from nautilus_trader.adapters.bybit.common.symbol import BybitSymbol
 from nautilus_trader.adapters.bybit.config import BybitExecClientConfig
+from nautilus_trader.adapters.bybit.endpoints.trade.batch_cancel_order import BybitBatchCancelOrder
+from nautilus_trader.adapters.bybit.endpoints.trade.batch_place_order import BybitBatchPlaceOrder
 from nautilus_trader.adapters.bybit.http.account import BybitAccountHttpAPI
 from nautilus_trader.adapters.bybit.http.client import BybitHttpClient
 from nautilus_trader.adapters.bybit.http.errors import BybitError
@@ -52,10 +54,12 @@ from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core.correctness import PyCondition
 from nautilus_trader.core.datetime import millis_to_nanos
 from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.execution.messages import BatchCancelOrders
 from nautilus_trader.execution.messages import CancelAllOrders
 from nautilus_trader.execution.messages import CancelOrder
 from nautilus_trader.execution.messages import ModifyOrder
 from nautilus_trader.execution.messages import SubmitOrder
+from nautilus_trader.execution.messages import SubmitOrderList
 from nautilus_trader.execution.reports import FillReport
 from nautilus_trader.execution.reports import OrderStatusReport
 from nautilus_trader.execution.reports import PositionStatusReport
@@ -542,54 +546,60 @@ class BybitExecutionClient(LiveExecutionClient):
                 venue_order_id=venue_order_id,
             )
 
+    async def _batch_cancel_orders(self, command: BatchCancelOrders) -> None:
+        # https://bybit-exchange.github.io/docs/v5/order/batch-cancel
+
+        bybit_symbol = BybitSymbol(command.instrument_id.symbol.value)
+        product_type = bybit_symbol.product_type
+        max_batch = 20 if product_type == BybitProductType.OPTION else 10
+
+        # Check open orders for instrument
+        open_order_ids = self._cache.client_order_ids_open(instrument_id=command.instrument_id)
+
+        # Filter orders that are actually open
+        valid_cancels: list[(CancelOrder)] = []
+        for cancel in command.cancels:
+            if cancel.client_order_id in open_order_ids:
+                valid_cancels.append(cancel)
+                continue
+            self._log.warning(f"{cancel.client_order_id!r} not open for cancel")
+
+        if not valid_cancels:
+            self._log.warning(f"No orders open for {command.instrument_id} batch cancel")
+            return
+
+        for i in range(0, len(valid_cancels), max_batch):
+            batch_cancels = valid_cancels[i : i + max_batch]
+            cancel_orders: list[BybitBatchCancelOrder] = []
+
+            for cancel in batch_cancels:
+                cancel_orders.append(
+                    BybitBatchCancelOrder(
+                        symbol=bybit_symbol.raw_symbol,
+                        orderId=cancel.venue_order_id.value if cancel.venue_order_id else None,
+                        orderLinkId=cancel.client_order_id.value,
+                    ),
+                )
+
+            async with self._retry_manager_pool as retry_manager:
+                await retry_manager.run(
+                    "batch_cancel_orders",
+                    None,
+                    self._http_account.batch_cancel_orders,
+                    product_type=product_type,
+                    cancel_orders=cancel_orders,
+                )
+
     async def _cancel_all_orders(self, command: CancelAllOrders) -> None:
         bybit_symbol = BybitSymbol(command.instrument_id.symbol.value)
-
-        if bybit_symbol.product_type == BybitProductType.INVERSE:
-            # Batch cancel not implemented for INVERSE
-            self._log.warning(
-                f"Batch cancel not implemented for INVERSE, "
-                f"canceling all for symbol {command.instrument_id.symbol.value}",
-            )
-            await self._http_account.cancel_all_orders(
-                bybit_symbol.product_type,
-                bybit_symbol.raw_symbol,
-            )
-            return
-
-        open_orders_strategy: list[Order] = self._cache.orders_open(
-            instrument_id=command.instrument_id,
-            strategy_id=command.strategy_id,
-        )
-
-        # Check total orders for instrument
-        open_orders_total_count = self._cache.orders_open_count(
-            instrument_id=command.instrument_id,
-        )
-        if open_orders_total_count > 10:
-            # This could be reimplemented later to group requests into batches of 10
-            self._log.warning(
-                f"Total {command.instrument_id.symbol.value} orders open exceeds 10, "
-                f"is {open_orders_total_count}: canceling all for symbol",
-            )
-            await self._http_account.cancel_all_orders(
-                bybit_symbol.product_type,
-                bybit_symbol.raw_symbol,
-            )
-            return
-
-        cancel_batch: list[Order] = []
-        for order in open_orders_strategy:
-            cancel_batch.append(order)
 
         async with self._retry_manager_pool as retry_manager:
             await retry_manager.run(
                 "cancel_all_orders",
                 None,
-                self._http_account.batch_cancel_orders,
+                self._http_account.cancel_all_orders,
                 product_type=bybit_symbol.product_type,
                 symbol=bybit_symbol.raw_symbol,
-                orders=cancel_batch,
             )
 
     async def _modify_order(self, command: ModifyOrder) -> None:
@@ -636,8 +646,6 @@ class BybitExecutionClient(LiveExecutionClient):
         if not self._check_order_validity(order, bybit_symbol.product_type):
             return
 
-        self._log.debug(f"Submitting order {order}")
-
         # Generate order submitted event, to ensure correct ordering of event
         self.generate_order_submitted(
             strategy_id=order.strategy_id,
@@ -660,6 +668,56 @@ class BybitExecutionClient(LiveExecutionClient):
                     client_order_id=order.client_order_id,
                     reason=retry_manager.message,
                     ts_event=self._clock.timestamp_ns(),
+                )
+
+    async def _submit_order_list(self, command: SubmitOrderList) -> None:
+        bybit_symbol = BybitSymbol(command.instrument_id.symbol.value)
+        product_type = bybit_symbol.product_type
+        max_batch = 20 if product_type == BybitProductType.OPTION else 10
+
+        for i in range(0, len(command.order_list.orders), max_batch):
+            batch_submits = command.order_list.orders[i : i + max_batch]
+            submit_orders: list[BybitBatchPlaceOrder] = []
+
+            for order in batch_submits:
+                if not self._check_order_validity(order, product_type):
+                    self._log.error(f"Error on {command}")
+                    return  # Do not submit batch
+
+                match order.order_type:
+                    case OrderType.MARKET:
+                        batch_order = self._create_market_batch_order(order)
+                    case OrderType.LIMIT:
+                        batch_order = self._create_limit_batch_order(order)
+                    case OrderType.LIMIT_IF_TOUCHED:
+                        batch_order = self._create_limit_if_touched_batch_order(order)
+                    case OrderType.STOP_MARKET:
+                        batch_order = self._create_stop_market_batch_order(order)
+                    case OrderType.MARKET_IF_TOUCHED:
+                        batch_order = self._create_market_if_touched_batch_order(order)
+                    case _:
+                        self._log.error(f"Unsupported order type for 'submit_order_list': {order}")
+                        self._log.error(f"Error on {command}")
+                        return
+
+                submit_orders.append(batch_order)
+
+            now_ns = self._clock.timestamp_ns()
+            for order in batch_submits:
+                self.generate_order_submitted(
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    ts_event=now_ns,
+                )
+
+            async with self._retry_manager_pool as retry_manager:
+                await retry_manager.run(
+                    "submit_order_list",
+                    None,
+                    self._http_account.batch_place_orders,
+                    product_type=product_type,
+                    submit_orders=submit_orders,
                 )
 
     def _check_order_validity(self, order: Order, product_type: BybitProductType) -> bool:
@@ -1057,3 +1115,125 @@ class BybitExecutionClient(LiveExecutionClient):
                     )
         except Exception as e:
             self._log.error(repr(e))
+
+    def _create_market_batch_order(
+        self,
+        order: MarketOrder,
+    ) -> BybitBatchPlaceOrder:
+        bybit_symbol = BybitSymbol(order.instrument_id.symbol.value)
+        time_in_force = self._determine_time_in_force(order)
+        order_side = self._enum_parser.parse_nautilus_order_side(order.side)
+        return BybitBatchPlaceOrder(
+            symbol=bybit_symbol.raw_symbol,
+            side=order_side,
+            orderType=BybitOrderType.MARKET,
+            qty=str(order.quantity),
+            marketUnit="baseCoin" if not order.is_quote_quantity else "quoteCoin",
+            timeInForce=time_in_force,
+            orderLinkId=str(order.client_order_id),
+            reduceOnly=order.is_reduce_only if order.is_reduce_only else None,
+        )
+
+    def _create_limit_batch_order(
+        self,
+        order: LimitOrder,
+    ) -> BybitBatchPlaceOrder:
+        bybit_symbol = BybitSymbol(order.instrument_id.symbol.value)
+        time_in_force = self._determine_time_in_force(order)
+        order_side = self._enum_parser.parse_nautilus_order_side(order.side)
+        return BybitBatchPlaceOrder(
+            symbol=bybit_symbol.raw_symbol,
+            side=order_side,
+            orderType=BybitOrderType.LIMIT,
+            qty=str(order.quantity),
+            marketUnit="baseCoin" if not order.is_quote_quantity else "quoteCoin",
+            price=str(order.price),
+            timeInForce=time_in_force,
+            orderLinkId=str(order.client_order_id),
+            reduceOnly=order.is_reduce_only if order.is_reduce_only else None,
+        )
+
+    def _create_limit_if_touched_batch_order(
+        self,
+        order: LimitIfTouchedOrder,
+    ) -> BybitBatchPlaceOrder:
+        bybit_symbol = BybitSymbol(order.instrument_id.symbol.value)
+        product_type = bybit_symbol.product_type
+        time_in_force = self._determine_time_in_force(order)
+        order_side = self._enum_parser.parse_nautilus_order_side(order.side)
+        trigger_direction = self._enum_parser.parse_trigger_direction(order.order_type, order.side)
+        trigger_type = self._enum_parser.parse_nautilus_trigger_type(order.trigger_type)
+        return BybitBatchPlaceOrder(
+            symbol=bybit_symbol.raw_symbol,
+            side=order_side,
+            orderType=BybitOrderType.MARKET,
+            qty=str(order.quantity),
+            marketUnit="baseCoin" if not order.is_quote_quantity else "quoteCoin",
+            price=str(order.price),
+            timeInForce=time_in_force,
+            orderLinkId=order.client_order_id.value,
+            reduceOnly=order.reduce_only,
+            tpslMode=BybitTpSlMode.PARTIAL if product_type != BybitProductType.SPOT else None,
+            triggerPrice=str(order.trigger_price),
+            triggerDirection=trigger_direction,
+            triggerBy=trigger_type,
+            takeProfit=str(order.trigger_price) if product_type == BybitProductType.SPOT else None,
+            tpTriggerBy=trigger_type if product_type != BybitProductType.SPOT else None,
+            tpLimitPrice=str(order.price) if product_type != BybitProductType.SPOT else None,
+            tpOrderType=BybitOrderType.LIMIT,
+        )
+
+    def _create_stop_market_batch_order(
+        self,
+        order: MarketOrder,
+    ) -> BybitBatchPlaceOrder:
+        bybit_symbol = BybitSymbol(order.instrument_id.symbol.value)
+        product_type = bybit_symbol.product_type
+        time_in_force = self._determine_time_in_force(order)
+        order_side = self._enum_parser.parse_nautilus_order_side(order.side)
+        trigger_direction = self._enum_parser.parse_trigger_direction(order.order_type, order.side)
+        trigger_type = self._enum_parser.parse_nautilus_trigger_type(order.trigger_type)
+        return BybitBatchPlaceOrder(
+            symbol=bybit_symbol.raw_symbol,
+            side=order_side,
+            orderType=BybitOrderType.MARKET,
+            qty=str(order.quantity),
+            marketUnit="baseCoin" if not order.is_quote_quantity else "quoteCoin",
+            timeInForce=time_in_force,
+            orderLinkId=str(order.client_order_id),
+            reduceOnly=order.is_reduce_only if order.is_reduce_only else None,
+            closeOnTrigger=True,  # Conservative for stop-loss orders
+            tpslMode=BybitTpSlMode.FULL if product_type != BybitProductType.SPOT else None,
+            stopLoss=str(order.trigger_price) if product_type == BybitProductType.SPOT else None,
+            triggerDirection=trigger_direction if product_type != BybitProductType.SPOT else None,
+            slTriggerBy=trigger_type if product_type != BybitProductType.SPOT else None,
+            slOrderType=BybitOrderType.MARKET,
+        )
+
+    def _create_market_if_touched_batch_order(
+        self,
+        order: MarketOrder,
+    ) -> BybitBatchPlaceOrder:
+        bybit_symbol = BybitSymbol(order.instrument_id.symbol.value)
+        product_type = bybit_symbol.product_type
+        time_in_force = self._determine_time_in_force(order)
+        order_side = self._enum_parser.parse_nautilus_order_side(order.side)
+        trigger_direction = self._enum_parser.parse_trigger_direction(order.order_type, order.side)
+        trigger_type = self._enum_parser.parse_nautilus_trigger_type(order.trigger_type)
+        return BybitBatchPlaceOrder(
+            symbol=bybit_symbol.raw_symbol,
+            side=order_side,
+            orderType=BybitOrderType.MARKET,
+            qty=str(order.quantity),
+            marketUnit="baseCoin" if not order.is_quote_quantity else "quoteCoin",
+            timeInForce=time_in_force,
+            orderLinkId=str(order.client_order_id),
+            reduceOnly=order.is_reduce_only if order.is_reduce_only else None,
+            tpslMode=BybitTpSlMode.FULL if product_type != BybitProductType.SPOT else None,
+            triggerPrice=(
+                str(order.trigger_price) if product_type == BybitProductType.SPOT else None
+            ),
+            triggerDirection=trigger_direction if product_type != BybitProductType.SPOT else None,
+            slTriggerBy=trigger_type if product_type != BybitProductType.SPOT else None,
+            slOrderType=BybitOrderType.MARKET,
+        )

@@ -153,7 +153,7 @@ impl RedisCacheDatabase {
         let handle = get_runtime().spawn(async move {
             process_commands(rx, trader_key_clone, config.clone())
                 .await
-                .expect("Error spawning '{CACHE_WRITE}' task")
+                .expect("Error spawning task '{CACHE_WRITE}'")
         });
 
         Ok(RedisCacheDatabase {
@@ -171,10 +171,10 @@ impl RedisCacheDatabase {
             log::debug!("Error sending close message: {e:?}")
         }
 
-        log::debug!("Awaiting '{CACHE_WRITE}' task");
+        log::debug!("Awaiting task '{CACHE_WRITE}'");
         tokio::task::block_in_place(|| {
             if let Err(e) = get_runtime().block_on(&mut self.handle) {
-                log::error!("Error awaiting '{CACHE_WRITE}' task: {:?}", e);
+                log::error!("Error awaiting task '{CACHE_WRITE}': {:?}", e);
             }
         });
     }
@@ -244,6 +244,7 @@ async fn process_commands(
     config: CacheConfig,
 ) -> anyhow::Result<()> {
     tracing::debug!("Starting cache processing");
+
     let db_config = config
         .database
         .as_ref()
@@ -280,6 +281,7 @@ async fn process_commands(
         drain_buffer(&mut con, &trader_key, &mut buffer);
     }
 
+    tracing::debug!("Stopped cache processing");
     Ok(())
 }
 

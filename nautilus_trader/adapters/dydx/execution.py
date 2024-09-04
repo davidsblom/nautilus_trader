@@ -20,7 +20,6 @@ import asyncio
 import secrets
 from collections import defaultdict
 from decimal import Decimal
-from random import randint
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -40,6 +39,7 @@ from nautilus_trader.adapters.dydx.common.symbol import DYDXSymbol
 from nautilus_trader.adapters.dydx.config import DYDXExecClientConfig
 from nautilus_trader.adapters.dydx.grpc.account import DYDXAccountGRPCAPI
 from nautilus_trader.adapters.dydx.grpc.account import Wallet
+from nautilus_trader.adapters.dydx.grpc.errors import DYDXGRPCError
 from nautilus_trader.adapters.dydx.grpc.order_builder import MAX_CLIENT_ID
 from nautilus_trader.adapters.dydx.grpc.order_builder import DYDXGRPCOrderType
 from nautilus_trader.adapters.dydx.grpc.order_builder import OrderBuilder
@@ -47,6 +47,7 @@ from nautilus_trader.adapters.dydx.grpc.order_builder import OrderFlags
 from nautilus_trader.adapters.dydx.http.account import DYDXAccountHttpAPI
 from nautilus_trader.adapters.dydx.http.client import DYDXHttpClient
 from nautilus_trader.adapters.dydx.http.errors import DYDXError
+from nautilus_trader.adapters.dydx.http.errors import should_retry
 from nautilus_trader.adapters.dydx.providers import DYDXInstrumentProvider
 from nautilus_trader.adapters.dydx.schemas.ws import DYDXWsFillSubaccountMessageContents
 from nautilus_trader.adapters.dydx.schemas.ws import DYDXWsMessageGeneral
@@ -62,6 +63,7 @@ from nautilus_trader.core.correctness import PyCondition
 from nautilus_trader.core.datetime import dt_to_unix_nanos
 from nautilus_trader.core.datetime import nanos_to_secs
 from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.execution.messages import BatchCancelOrders
 from nautilus_trader.execution.messages import CancelAllOrders
 from nautilus_trader.execution.messages import CancelOrder
 from nautilus_trader.execution.messages import SubmitOrder
@@ -70,6 +72,7 @@ from nautilus_trader.execution.reports import FillReport
 from nautilus_trader.execution.reports import OrderStatusReport
 from nautilus_trader.execution.reports import PositionStatusReport
 from nautilus_trader.live.execution_client import LiveExecutionClient
+from nautilus_trader.live.retry import RetryManagerPool
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import OmsType
 from nautilus_trader.model.enums import OrderSide
@@ -95,9 +98,6 @@ if TYPE_CHECKING:
     from nautilus_trader.model.objects import Currency
 
 
-ACCOUNT_SEQUENCE_MISMATCH_ERROR_CODE = 32
-
-
 class ClientOrderIdHelper:
     """
     Generate integer client order IDs.
@@ -113,7 +113,10 @@ class ClientOrderIdHelper:
         """
         Generate a unique client order ID integer and save it in the Cache.
         """
-        client_order_id_int = secrets.randbelow(MAX_CLIENT_ID)
+        try:
+            client_order_id_int = int(client_order_id.value)
+        except ValueError:
+            client_order_id_int = secrets.randbelow(MAX_CLIENT_ID)
 
         # Store the generated client order ID integer in the cache for later lookup.
         # MAX_CLIENT_ID is 2**32 - 1 which can be represented by 32 bits, i.e. 4 bytes.
@@ -129,12 +132,17 @@ class ClientOrderIdHelper:
         """
         Retrieve the ClientOrderId integer from the cache.
         """
-        value = self._cache.get(client_order_id.value)
+        result = None
 
-        if value is not None:
-            return int.from_bytes(value, byteorder="big")
+        try:
+            result = int(client_order_id.value)
+        except ValueError:
+            value = self._cache.get(client_order_id.value)
 
-        return None
+            if value is not None:
+                result = int.from_bytes(value, byteorder="big")
+
+        return result
 
     def get_client_order_id(self, client_order_id_int: int) -> ClientOrderId:
         """
@@ -207,9 +215,6 @@ class DYDXExecutionClient(LiveExecutionClient):
         )
 
         # Configuration
-        self._max_retries: int = config.max_retries or 0
-        self._initial_retry_delay_secs: float = config.initial_retry_delay_secs or 1.0
-        self._max_retry_delay_secs: float = config.max_retry_delay_secs or 10.0
         self._wallet_address = config.wallet_address or get_wallet_address(
             is_testnet=config.is_testnet,
         )
@@ -256,6 +261,15 @@ class DYDXExecutionClient(LiveExecutionClient):
         self._order_builders: dict[InstrumentId, OrderBuilder] = {}
         self._generate_order_status_retries: dict[ClientOrderId, int] = {}
 
+        self._retry_manager_pool = RetryManagerPool(
+            pool_size=100,
+            max_retries=config.max_retries or 0,
+            retry_delay_secs=config.retry_delay or 1.0,
+            logger=self._log,
+            exc_types=(DYDXError, DYDXGRPCError, AioRpcError),
+            retry_check=should_retry,
+        )
+
     async def _connect(self) -> None:
         # The instruments are used in the first account channel message.
         await self._instrument_provider.load_all_async()
@@ -287,6 +301,9 @@ class DYDXExecutionClient(LiveExecutionClient):
         )
         await self._ws_client.disconnect()
         await self._grpc_account.disconnect()
+
+    def _stop(self) -> None:
+        self._retry_manager_pool.shutdown()
 
     async def _get_order_status_report(
         self,
@@ -1080,59 +1097,22 @@ class DYDXExecutionClient(LiveExecutionClient):
             )
             return
 
-        is_submitted = False
-
-        for retry_counter in range(self._max_retries + 1):
-            if is_submitted is False:
-                try:
-                    response = await self._grpc_account.place_order(
-                        wallet=self._wallet,
-                        order=order_msg,
-                    )
-                    is_submitted = response.tx_response.code == 0
-
-                    # Account sequence mismatch
-                    if (
-                        response.tx_response.code == ACCOUNT_SEQUENCE_MISMATCH_ERROR_CODE
-                        and retry_counter < self._max_retries
-                    ):
-                        initial_sleep_duration_ms = int(self._initial_retry_delay_secs * 1000)
-                        max_retry_delay_ms = int(self._max_retry_delay_secs * 1000)
-                        sleep_duration_ms = randint(  # noqa: S311
-                            initial_sleep_duration_ms,
-                            min(max_retry_delay_ms, initial_sleep_duration_ms * 2**retry_counter),
-                        )
-                        sleep_duration_secs = sleep_duration_ms / 1_000
-                        self._log.warning(
-                            f"Failed to submit order. Retry {retry_counter + 1}/{self._max_retries}.",
-                        )
-
-                        await asyncio.sleep(sleep_duration_secs)
-
-                    elif response.tx_response.code != 0:
-                        rejection_reason = f"Failed to submit the order: {response}"
-                        self._log.error(rejection_reason)
-
-                        self.generate_order_rejected(
-                            strategy_id=order.strategy_id,
-                            instrument_id=order.instrument_id,
-                            client_order_id=order.client_order_id,
-                            reason=rejection_reason,
-                            ts_event=self._clock.timestamp_ns(),
-                        )
-                        return
-                except AioRpcError as e:
-                    rejection_reason = f"Failed to submit the order: code {e.code} {e.details}"
-                    self._log.error(rejection_reason)
-
-                    self.generate_order_rejected(
-                        strategy_id=order.strategy_id,
-                        instrument_id=order.instrument_id,
-                        client_order_id=order.client_order_id,
-                        reason=rejection_reason,
-                        ts_event=self._clock.timestamp_ns(),
-                    )
-                    return
+        async with self._retry_manager_pool as retry_manager:
+            await retry_manager.run(
+                name="place_order",
+                details=[order.client_order_id],
+                func=self._grpc_account.place_order,
+                wallet=self._wallet,
+                order=order_msg,
+            )
+            if not retry_manager.result:
+                self.generate_order_rejected(
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    reason=retry_manager.message,
+                    ts_event=self._clock.timestamp_ns(),
+                )
 
     async def _submit_order(self, command: SubmitOrder) -> None:
         await self._submit_order_single(order=command.order)
@@ -1142,6 +1122,30 @@ class DYDXExecutionClient(LiveExecutionClient):
             instrument_id=command.instrument_id,
             client_order_id=command.client_order_id,
         )
+
+    async def _batch_cancel_orders(self, command: BatchCancelOrders) -> None:
+        # Check open orders for the strategy
+        open_orders_strategy: list[Order] = self._cache.orders_open(strategy_id=command.strategy_id)
+        open_order_ids = {order.client_order_id for order in open_orders_strategy}
+
+        # Filter orders that are actually open
+        valid_cancels: list[CancelOrder] = []
+
+        for cancel in command.cancels:
+            if cancel.client_order_id in open_order_ids:
+                valid_cancels.append(cancel)
+            else:
+                self._log.warning(f"{cancel.client_order_id!r} not open for cancel")
+
+        if not valid_cancels:
+            self._log.warning("No orders open for batch cancel")
+            return
+
+        for order in valid_cancels:
+            await self._cancel_order_single(
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+            )
 
     async def _cancel_all_orders(self, command: CancelAllOrders) -> None:
         open_orders_strategy: list[Order] = self._cache.orders_open(
@@ -1225,46 +1229,25 @@ class DYDXExecutionClient(LiveExecutionClient):
             self._log.error(f"Cannot cancel order {client_order_id!r}: no wallet available.")
             return
 
-        is_canceled = False
+        is_expired = (
+            nanos_to_secs(self._clock.timestamp_ns()) > good_til_date_secs
+            if good_til_date_secs
+            else False
+        )
 
-        for retry_counter in range(self._max_retries + 1):
-            is_expired = (
-                nanos_to_secs(self._clock.timestamp_ns()) > good_til_date_secs
-                if good_til_date_secs
-                else False
+        if is_expired:
+            self._log.warning(f"Cannot cancel order: order {client_order_id!r} is expired")
+            return
+
+        current_block = await self._grpc_account.latest_block_height()
+
+        async with self._retry_manager_pool as retry_manager:
+            await retry_manager.run(
+                name="cancel_order",
+                details=[client_order_id],
+                func=self._grpc_account.cancel_order,
+                wallet=self._wallet,
+                order_id=order_id,
+                good_til_block=current_block + 10,
+                good_til_block_time=good_til_date_secs,
             )
-
-            if is_expired:
-                self._log.warning(f"Cannot cancel order: order {client_order_id!r} is expired")
-                return
-
-            if is_canceled is False:
-                current_block = await self._grpc_account.latest_block_height()
-                response = await self._grpc_account.cancel_order(
-                    wallet=self._wallet,
-                    order_id=order_id,
-                    good_til_block=current_block + 10,
-                    good_til_block_time=good_til_date_secs,
-                )
-
-                is_canceled = response.tx_response.code == 0
-
-                if (
-                    response.tx_response.code == ACCOUNT_SEQUENCE_MISMATCH_ERROR_CODE
-                    and retry_counter < self._max_retries
-                ):
-                    initial_sleep_duration_ms = int(self._initial_retry_delay_secs * 1000)
-                    max_retry_delay_ms = int(self._max_retry_delay_secs * 1000)
-                    sleep_duration_ms = randint(  # noqa: S311
-                        initial_sleep_duration_ms,
-                        min(max_retry_delay_ms, initial_sleep_duration_ms * 2**retry_counter),
-                    )
-                    sleep_duration_secs = sleep_duration_ms / 1_000
-                    self._log.warning(
-                        f"Failed to cancel order. Retry {retry_counter + 1}/{self._max_retries}.",
-                    )
-
-                    await asyncio.sleep(sleep_duration_secs)
-                elif response.tx_response.code != 0:
-                    self._log.error(f"Failed to cancel the order: {response}")
-                    return
