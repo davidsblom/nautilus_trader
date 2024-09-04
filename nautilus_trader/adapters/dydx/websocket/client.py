@@ -128,7 +128,7 @@ class DYDXWebsocketClient:
                 if self._previous_message_id != message_id - 1:
                     # Websocket message is lost.
                     self._log.error(
-                        f"Inconsistent message ids ({self._previous_message_id} != {message_id - 1}). Resubscribe to subscriptions.",
+                        f"Inconsistent message ids ({self._previous_message_id} != {message_id - 1}).",
                     )
                     # self._loop.create_task(self._resubscribe_all())
 
