@@ -57,6 +57,7 @@ use nautilus_model::{
         OrderFilled, OrderModifyRejected, OrderRejected, OrderSubmitted, OrderTriggered,
         OrderUpdated,
     },
+    identifiers::parse_generic_spread_id_legs,
     identifiers::{
         AccountId, ClientOrderId, InstrumentId, PositionId, StrategyId, TradeId, TraderId, Venue,
         VenueOrderId,
@@ -158,6 +159,9 @@ pub struct OrderMatchingEngine {
     option_settlement_failed: bool,
     option_settlement_warning: Option<&'static str>,
     option_expiration_orders_canceled: bool,
+    /// Component legs and signed ratios of a generic spread instrument, parsed
+    /// from the spread symbol; `None` for single-leg instruments.
+    package_legs: Option<Vec<(InstrumentId, i64)>>,
 }
 
 impl Debug for OrderMatchingEngine {
@@ -184,6 +188,13 @@ impl OrderMatchingEngine {
         cache: Rc<RefCell<Cache>>,
         config: OrderMatchingEngineConfig,
     ) -> Self {
+        let package_legs = if instrument.is_spread() {
+            parse_generic_spread_id_legs(&instrument.id())
+                .ok()
+                .filter(|legs| legs.len() >= 2)
+        } else {
+            None
+        };
         let book = OrderBook::new(instrument.id(), book_type);
         let mut core = OrderMatchingCore::new(instrument.id(), instrument.price_increment());
         core.set_fill_limit_inside_spread(Self::fill_limit_inside_spread_or_false(&fill_model));
@@ -257,6 +268,7 @@ impl OrderMatchingEngine {
             option_settlement_failed: false,
             option_settlement_warning: None,
             option_expiration_orders_canceled: false,
+            package_legs,
         }
     }
 
@@ -424,7 +436,7 @@ impl OrderMatchingEngine {
     /// available for subsequent orders. The journal records only the levels the
     /// attempt crosses, so its cost does not grow with the consumption maps.
     fn fok_consumption_journal(&self, order: &OrderAny) -> Option<ConsumptionJournal> {
-        if !self.config.liquidity_consumption || order.time_in_force() != TimeInForce::Fok {
+        if order.time_in_force() != TimeInForce::Fok || !self.config.liquidity_consumption {
             return None;
         }
 
@@ -2662,6 +2674,27 @@ impl OrderMatchingEngine {
             return;
         }
 
+        let is_spread = matches!(self.instrument, InstrumentAny::OptionSpread(_));
+        if is_spread {
+            // `iterate` matches resting orders ahead of this check, so enter
+            // pending resolution at the first trigger. Latched because a queuing
+            // handler leaves the cached status behind the cancellation dispatch.
+            if !self.option_expiration_orders_canceled {
+                self.option_expiration_orders_canceled = true;
+                self.enter_pending_resolution(excluded);
+            }
+
+            // Component legs settle through their own ordinary option-expiry
+            // paths on their own engines; a spread package books nothing, so
+            // it completes as soon as its resting orders are canceled.
+            self.expiration_processed = true;
+            self.pending_resolution = false;
+            self.instrument_close.take();
+            self.option_settlement_warning = None;
+            log::info!("{} reached expiration", self.instrument.id());
+            return;
+        }
+
         if matches!(
             self.instrument,
             InstrumentAny::OptionContract(_) | InstrumentAny::CryptoOption(_)
@@ -3171,6 +3204,30 @@ impl OrderMatchingEngine {
             .unwrap_or_else(|e| Some(e.to_string().into()))
         {
             self.generate_order_rejected(order, reason);
+            return;
+        }
+
+        // Package execution currently handles market and limit orders only; denying
+        // the remaining market-family types outright keeps every supported order on
+        // the planned path instead of bypassing package component accounting
+        if self.package_legs.is_some()
+            && matches!(
+                order.order_type(),
+                OrderType::MarketToLimit
+                    | OrderType::StopMarket
+                    | OrderType::MarketIfTouched
+                    | OrderType::TrailingStopMarket
+            )
+        {
+            self.generate_order_rejected(
+                order,
+                format!(
+                    "Unsupported package order type {} for spread instrument {}",
+                    order.order_type(),
+                    self.instrument.id()
+                )
+                .into(),
+            );
             return;
         }
 
@@ -5378,6 +5435,14 @@ impl OrderMatchingEngine {
                     | OrderType::TrailingStopMarket
             )
         {
+            // Package fills only consume whole spreads at the derived net quote;
+            // an unfilled remainder is canceled without resting rather than
+            // slipped by an increment the component observations never priced
+            if self.package_legs.is_some() {
+                self.cancel_order(order, None);
+                return Ok(());
+            }
+
             // Exhausted L1 volume: slip remainder by a single price increment
             let Some(last_fill_px) = last_fill_px else {
                 return Ok(());
@@ -5699,6 +5764,11 @@ impl OrderMatchingEngine {
             underlying_px,
         )?;
 
+        let package_details = self.package_component_details(order, last_qty)?;
+        let package_info = package_details
+            .as_deref()
+            .map(|legs| self.package_fill_info(&fee_order, legs));
+
         // Resolve implicit membership before dispatch can close the cached position
         let reduce_only_order_ids = position
             .map(|position| self.reduce_only_order_ids(position.id))
@@ -5708,16 +5778,47 @@ impl OrderMatchingEngine {
             .insert(order.client_order_id(), new_filled_qty);
 
         let venue_order_id = self.ids_generator.get_venue_order_id(order).unwrap();
-        self.generate_order_filled(
+        let ts_now = self.clock.borrow().timestamp_ns();
+        let account_id = order
+            .account_id()
+            .unwrap_or(self.account_ids.get(&order.trader_id()).unwrap().to_owned());
+        let trade_id = self.ids_generator.generate_trade_id(ts_now);
+
+        if let Some(legs) = &package_details {
+            // Component accounting first: the correlated component fills book
+            // cash, commissions, and component positions on the leg instruments
+            // and are fully applied before observers receive the package fill
+            // notification.
+            let component_fills = self.build_package_component_fills(
+                order,
+                &fee_order,
+                legs,
+                venue_order_id,
+                trade_id,
+                ts_now,
+                liquidity_side,
+                account_id,
+            )?;
+            for fill in component_fills {
+                self.dispatch_order_event(OrderEventAny::Filled(fill));
+            }
+        }
+
+        let package_fill = self.build_order_filled(
             order,
             venue_order_id,
             venue_position_id,
             last_qty,
             last_px,
             self.instrument.quote_currency(),
+            trade_id,
+            ts_now,
             commission,
             liquidity_side,
+            package_info,
         );
+        self.record_pending_fill(&package_fill);
+        self.dispatch_order_event(OrderEventAny::Filled(package_fill));
 
         let post_fill_filled_qty = self
             .cached_filled_qty
@@ -7482,18 +7583,28 @@ impl OrderMatchingEngine {
         self.dispatch_order_event(event);
     }
 
+    /// Builds a package fill event carrying the package trade ID shared with
+    /// its correlated component accounting fills.
+    ///
+    /// The package fill is order-management-only; the accounting side of the
+    /// execution is booked by the component fills built from the same trade
+    /// ID and details. Callers dispatch the component fills first and then
+    /// record and dispatch the package fill itself.
     #[expect(clippy::too_many_arguments)]
-    fn generate_order_filled(
-        &mut self,
+    fn build_order_filled(
+        &self,
         order: &OrderAny,
         venue_order_id: VenueOrderId,
         venue_position_id: Option<PositionId>,
         last_qty: Quantity,
         last_px: Price,
         quote_currency: Currency,
+        trade_id: TradeId,
+        ts_now: UnixNanos,
         commission: Money,
         liquidity_side: LiquiditySide,
-    ) {
+        info: Option<IndexMap<Ustr, Ustr>>,
+    ) -> OrderFilled {
         debug_assert!(
             last_qty <= order.quantity(),
             "Fill quantity {last_qty} exceeds order quantity {order_qty} for {client_order_id}",
@@ -7501,18 +7612,17 @@ impl OrderMatchingEngine {
             client_order_id = order.client_order_id()
         );
 
-        let ts_now = self.clock.borrow().timestamp_ns();
         let account_id = order
             .account_id()
             .unwrap_or(self.account_ids.get(&order.trader_id()).unwrap().to_owned());
-        let fill = OrderFilled::new(
+        OrderFilled::new(
             order.trader_id(),
             order.strategy_id(),
             order.instrument_id(),
             order.client_order_id(),
             venue_order_id,
             account_id,
-            self.ids_generator.generate_trade_id(ts_now),
+            trade_id,
             order.order_side(),
             order.order_type(),
             last_qty,
@@ -7525,11 +7635,233 @@ impl OrderMatchingEngine {
             false,
             venue_position_id,
             Some(commission),
-            None,
-        );
+            info,
+        )
+    }
 
-        self.record_pending_fill(&fill);
-        self.dispatch_order_event(OrderEventAny::Filled(fill));
+    /// Derives a package fill's correlated component details from the current
+    /// component observations: each leg consumes `fill quantity * |ratio|`
+    /// at the leg side's current observation price. Returns `None` for
+    /// single-leg instruments.
+    ///
+    /// A missing leg instrument or observation is a defect: component
+    /// accounting must exist for every committed package execution, so the
+    /// error aborts the fill before anything is dispatched.
+    fn package_component_details(
+        &self,
+        order: &OrderAny,
+        fill_qty: Quantity,
+    ) -> anyhow::Result<Option<Vec<PackageLegFill>>> {
+        let Some(legs) = &self.package_legs else {
+            return Ok(None);
+        };
+
+        let mut details = Vec::with_capacity(legs.len());
+        for &(leg, ratio) in legs {
+            let instrument = {
+                let cache = self.cache.borrow();
+                cache.instrument(&leg).cloned()
+            };
+            let Some(instrument) = instrument else {
+                anyhow::bail!(
+                    "Cannot build package component fill for {}: \
+                     leg instrument {} not found",
+                    order.client_order_id(),
+                    leg
+                );
+            };
+            let quote = {
+                let cache = self.cache.borrow();
+                cache.quote(&leg).copied()
+            };
+            let Some(quote) = quote else {
+                anyhow::bail!(
+                    "Cannot build package component fill for {}: \
+                     leg quote for {} not found",
+                    order.client_order_id(),
+                    instrument.id()
+                );
+            };
+            let buy_leg = (order.order_side() == OrderSide::Buy) == (ratio > 0);
+            let (side, price) = if buy_leg {
+                (OrderSide::Buy, quote.ask_price)
+            } else {
+                (OrderSide::Sell, quote.bid_price)
+            };
+            let quantity_raw = fill_qty
+                .raw()
+                .checked_mul(QuantityRaw::from(ratio.unsigned_abs()))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Cannot build package component fill for {}: \
+                         leg {} quantity overflow",
+                        order.client_order_id(),
+                        leg
+                    )
+                })?;
+            details.push(PackageLegFill {
+                leg,
+                side,
+                quantity: Quantity::from_raw(quantity_raw, fill_qty.precision),
+                price,
+            });
+        }
+        Ok(Some(details))
+    }
+
+    /// Builds the correlated component accounting fills for a derived package
+    /// fill, one per component leg in plan order.
+    ///
+    /// Each component fill realizes one leg's planned consumption as an
+    /// ordinary fill on the leg instrument: it books the leg quantity at the
+    /// leg's actual execution price with the leg's fee-model commission, and
+    /// carries stable correlated identifiers derived from the package fill —
+    /// client order ID `{package_client_order_id}-LEG-{index}`, venue order ID
+    /// `{package_venue_order_id}-LEG-{index}`, and trade ID
+    /// `{package_trade_id}-LEG-{index}`. The exec engine derives the component
+    /// positions and netting from these fills.
+    ///
+    /// A missing leg instrument or fee-model failure is a defect: component
+    /// accounting must exist for every committed package execution, so the
+    /// error aborts the fill before anything is dispatched.
+    #[expect(clippy::too_many_arguments)]
+    fn build_package_component_fills(
+        &self,
+        order: &OrderAny,
+        fee_order: &OrderAny,
+        legs: &[PackageLegFill],
+        package_venue_order_id: VenueOrderId,
+        package_trade_id: TradeId,
+        ts_now: UnixNanos,
+        liquidity_side: LiquiditySide,
+        account_id: AccountId,
+    ) -> anyhow::Result<Vec<OrderFilled>> {
+        let mut fills = Vec::with_capacity(legs.len());
+        for (index, detail) in legs.iter().enumerate() {
+            let client_order_id = order.client_order_id();
+            let instrument = {
+                let cache = self.cache.borrow();
+                cache.instrument(&detail.leg).cloned()
+            };
+            let Some(instrument) = instrument else {
+                anyhow::bail!(
+                    "Cannot build package component fill for {}: \
+                     leg instrument {} not found",
+                    client_order_id,
+                    detail.leg
+                );
+            };
+            let commission = self
+                .fee_model
+                .get_commission(fee_order, detail.quantity, detail.price, &instrument)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Cannot build package component fill for {}: \
+                         fee model failed for leg {}: {e}",
+                        client_order_id,
+                        detail.leg
+                    )
+                })?;
+
+            let mut info = IndexMap::new();
+            info.insert(
+                Ustr::from("package_client_order_id"),
+                Ustr::from(client_order_id.as_str()),
+            );
+            let fill = OrderFilled::new(
+                order.trader_id(),
+                order.strategy_id(),
+                detail.leg,
+                ClientOrderId::from(format!("{client_order_id}-LEG-{index}").as_str()),
+                VenueOrderId::from(format!("{package_venue_order_id}-LEG-{index}").as_str()),
+                account_id,
+                TradeId::from(format!("{package_trade_id}-LEG-{index}").as_str()),
+                detail.side,
+                order.order_type(),
+                detail.quantity,
+                detail.price,
+                instrument.quote_currency(),
+                liquidity_side,
+                UUID4::new(),
+                ts_now,
+                ts_now,
+                false,
+                None,
+                Some(commission),
+                Some(info),
+            );
+            fills.push(fill);
+        }
+        Ok(fills)
+    }
+
+    /// Builds the reporting details carried by a package fill for its planned
+    /// component legs: the liquidity each component provided and the fee the
+    /// venue's model would charge for the same component quantity as an
+    /// ordinary legged fill. The accounting side of the execution is booked by
+    /// the correlated component fills; these details are reporting only, and a
+    /// component fee is omitted when its instrument or fee computation is
+    /// unavailable.
+    fn package_fill_info(
+        &self,
+        fee_order: &OrderAny,
+        legs: &[PackageLegFill],
+    ) -> IndexMap<Ustr, Ustr> {
+        let mut info = IndexMap::new();
+        info.insert(
+            Ustr::from("package_leg_count"),
+            Ustr::from(legs.len().to_string().as_str()),
+        );
+        for (index, detail) in legs.iter().enumerate() {
+            let prefix = format!("leg_{index}");
+            info.insert(
+                Ustr::from(&format!("{prefix}_id")),
+                Ustr::from(detail.leg.to_string().as_str()),
+            );
+            info.insert(
+                Ustr::from(&format!("{prefix}_side")),
+                Ustr::from(detail.side.to_string().as_str()),
+            );
+            info.insert(
+                Ustr::from(&format!("{prefix}_qty")),
+                Ustr::from(detail.quantity.as_decimal().to_string().as_str()),
+            );
+            info.insert(
+                Ustr::from(&format!("{prefix}_px")),
+                Ustr::from(detail.price.as_decimal().to_string().as_str()),
+            );
+            let instrument = {
+                let cache = self.cache.borrow();
+                cache.instrument(&detail.leg).cloned()
+            };
+            let Some(instrument) = instrument else {
+                log::debug!(
+                    "Omitting fee for leg {} from package fill info: instrument not found",
+                    detail.leg
+                );
+                continue;
+            };
+            match self.fee_model.get_commission(
+                fee_order,
+                detail.quantity,
+                detail.price,
+                &instrument,
+            ) {
+                Ok(fee) => {
+                    info.insert(
+                        Ustr::from(&format!("{prefix}_fee")),
+                        Ustr::from(fee.as_decimal().to_string().as_str()),
+                    );
+                }
+                Err(e) => {
+                    log::debug!(
+                        "Omitting fee for leg {} from package fill info: {e}",
+                        detail.leg
+                    );
+                }
+            }
+        }
+        info
     }
 
     fn record_pending_fill(&mut self, fill: &OrderFilled) {
@@ -7584,6 +7916,27 @@ struct PendingFill {
     position_id: Option<PositionId>,
     opening_trade_id: Option<TradeId>,
     quantity_change: Decimal,
+}
+
+/// One component's realized consumption within a package fill.
+///
+/// Each detail is realized as one correlated component accounting fill on the
+/// leg instrument at fill time: it books the component quantity at the
+/// component's current observation price with the component's fee-model
+/// commission, and the exec engine derives the component positions and netting
+/// from it. The package fill itself is order-management-only and books no
+/// accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackageLegFill {
+    /// The component instrument.
+    pub leg: InstrumentId,
+    /// The side consumed on the component book.
+    pub side: OrderSide,
+    /// The component quantity consumed, in whole contracts per unit of ratio
+    /// magnitude (`filled packages * abs(ratio)`).
+    pub quantity: Quantity,
+    /// The component price at which the quantity was available.
+    pub price: Price,
 }
 
 /// Liquidity consumption changed by a FOK fill attempt, recorded so it can be reverted.

@@ -2058,6 +2058,10 @@ pub struct SpreadQuoteAggregator {
     vega_pricing_temporarily_disabled: bool,
     vega_pricing_timeout_seconds: u64,
     price_rounder: Option<Box<dyn SpreadPriceRounder>>,
+    /// Package tick that net bid/ask prices round against (bid down, ask up).
+    price_increment: Price,
+    /// Maximum accepted leg observation age, when configured.
+    max_quote_age_ns: Option<u64>,
     is_running: bool,
     aggregator_weak: Option<Weak<RefCell<Self>>>,
 }
@@ -2086,6 +2090,7 @@ impl SpreadQuoteAggregator {
         is_futures_spread: bool,
         price_precision: u8,
         size_precision: u8,
+        price_increment: Price,
         handler: Box<dyn FnMut(QuoteTick)>,
         clock: Rc<RefCell<dyn Clock>>,
         historical_mode: bool,
@@ -2095,6 +2100,7 @@ impl SpreadQuoteAggregator {
         vega_pricing_timeout_seconds: u64,
         vega_provider: Option<Box<dyn VegaProvider>>,
         price_rounder: Option<Box<dyn SpreadPriceRounder>>,
+        max_quote_age_ns: Option<u64>,
     ) -> Self {
         assert!(legs.len() >= 2, "Spread must have more than one leg");
         let n_legs = legs.len();
@@ -2103,6 +2109,10 @@ impl SpreadQuoteAggregator {
         for &r in &ratios {
             assert!(r != 0, "Ratio cannot be zero");
         }
+        assert!(
+            price_increment.raw() > 0,
+            "Price increment must be positive"
+        );
         let timer_name = format!("SPREAD_QUOTE_{spread_instrument_id}");
         let vega_pricing_timeout_timer_name =
             format!("VEGA_PRICING_TIMEOUT_{spread_instrument_id}");
@@ -2135,6 +2145,8 @@ impl SpreadQuoteAggregator {
             vega_pricing_temporarily_disabled: false,
             vega_pricing_timeout_seconds,
             price_rounder,
+            price_increment,
+            max_quote_age_ns,
             is_running: false,
             aggregator_weak: None,
         }
@@ -2334,6 +2346,14 @@ impl SpreadQuoteAggregator {
     }
 
     /// Builds and sends one spread quote.
+    ///
+    /// Computes the signed-ratio net bid and ask in fixed point, rounds the bid
+    /// down and the ask up to the package tick (including negative prices), and
+    /// floors each side's minimum ratio-adjusted size to whole packages. A
+    /// quote is published only while every leg observation is non-future at
+    /// build time and within the freshness limit; a suppressed build keeps its
+    /// pending update so the next accepted observation retries. Option spreads
+    /// with available vega data quote from the vega-weighted prices instead.
     fn build_and_send_quote(&mut self, ts_event: UnixNanos) {
         if !self.has_update {
             return;
@@ -2342,8 +2362,13 @@ impl SpreadQuoteAggregator {
         let use_vega_pricing =
             !(self.disable_vega_pricing || self.vega_pricing_temporarily_disabled);
 
+        let mut bid_raw = 0_i128;
+        let mut ask_raw = 0_i128;
+        let mut bid_size_raw = i128::MAX;
+        let mut ask_size_raw = i128::MAX;
+
         for (idx, &leg_id) in self.leg_ids.iter().enumerate() {
-            let Some(tick) = self.last_quotes.get(&leg_id) else {
+            let Some(leg) = self.last_quotes.get(&leg_id) else {
                 log::error!(
                     "SpreadQuoteAggregator[{}]: Missing quote for leg {}",
                     self.spread_instrument_id,
@@ -2351,12 +2376,25 @@ impl SpreadQuoteAggregator {
                 );
                 return;
             };
-            let ask_price = tick.ask_price.as_f64();
-            let bid_price = tick.bid_price.as_f64();
+            if leg.ts_init > ts_event
+                || self
+                    .max_quote_age_ns
+                    .is_some_and(|max_age| ts_event.as_u64() - leg.ts_init.as_u64() > max_age)
+            {
+                log::debug!(
+                    "SpreadQuoteAggregator[{}]: Leg {} quote stale at {ts_event}; suppressing spread quote",
+                    self.spread_instrument_id,
+                    leg_id
+                );
+                return;
+            }
+
+            let bid_price = leg.bid_price.as_f64();
+            let ask_price = leg.ask_price.as_f64();
             self.bid_prices[idx] = bid_price;
             self.ask_prices[idx] = ask_price;
-            self.bid_sizes[idx] = tick.bid_size.as_f64();
-            self.ask_sizes[idx] = tick.ask_size.as_f64();
+            self.bid_sizes[idx] = leg.bid_size.as_f64();
+            self.ask_sizes[idx] = leg.ask_size.as_f64();
 
             if !self.is_futures_spread {
                 self.mid_prices[idx] = f64::midpoint(ask_price, bid_price);
@@ -2369,22 +2407,140 @@ impl SpreadQuoteAggregator {
                     self.vegas[idx] = vega;
                 }
             }
+
+            // Raw price values share one fixed-point scale regardless of the
+            // display `precision` metadata, so the signed-ratio sum needs no
+            // rescaling; the tick rounding below maps onto the package increment
+            let ratio = i128::from(self.ratios[idx]);
+            let leg_bid_price = Self::raw_to_i128(leg.bid_price.raw());
+            let leg_ask_price = Self::raw_to_i128(leg.ask_price.raw());
+            let (bid_term, ask_term) = if ratio >= 0 {
+                (leg_bid_price, leg_ask_price)
+            } else {
+                (leg_ask_price, leg_bid_price)
+            };
+            let (Some(bid_term), Some(ask_term)) =
+                (ratio.checked_mul(bid_term), ratio.checked_mul(ask_term))
+            else {
+                log::error!(
+                    "SpreadQuoteAggregator[{}]: net price arithmetic overflow for leg {}",
+                    self.spread_instrument_id,
+                    leg_id
+                );
+                return;
+            };
+            let (Some(next_bid), Some(next_ask)) =
+                (bid_raw.checked_add(bid_term), ask_raw.checked_add(ask_term))
+            else {
+                log::error!(
+                    "SpreadQuoteAggregator[{}]: net price arithmetic overflow for leg {}",
+                    self.spread_instrument_id,
+                    leg_id
+                );
+                return;
+            };
+            bid_raw = next_bid;
+            ask_raw = next_ask;
+
+            // Sizes share the same fixed-point scale as prices, so one contract
+            // is the raw value of Quantity::from(1) at any display precision
+            let size_unit = Self::raw_to_i128(Quantity::from(1).raw());
+            let leg_bid_size = Self::raw_to_i128(leg.bid_size.raw());
+            let leg_ask_size = Self::raw_to_i128(leg.ask_size.raw());
+            let (side_bid_size, side_ask_size) = if ratio >= 0 {
+                (leg_bid_size, leg_ask_size)
+            } else {
+                (leg_ask_size, leg_bid_size)
+            };
+            // Whole packages: floor(side capacity / (|ratio| * one contract)) packages
+            let package_size = ratio.abs() * size_unit;
+            bid_size_raw = bid_size_raw.min(side_bid_size / package_size * size_unit);
+            ask_size_raw = ask_size_raw.min(side_ask_size / package_size * size_unit);
         }
-        let (raw_bid, raw_ask) = if self.is_futures_spread {
-            self.create_futures_spread_prices()
+
+        let spread_quote = if self.is_futures_spread || !use_vega_pricing {
+            self.create_exact_spread_quote(bid_raw, ask_raw, bid_size_raw, ask_size_raw, ts_event)
+        } else if let Some((raw_bid, raw_ask)) = self.create_option_spread_prices() {
+            Some(self.create_quote_tick_from_raw_prices(raw_bid, raw_ask, ts_event))
         } else {
-            self.create_option_spread_prices()
+            self.create_exact_spread_quote(bid_raw, ask_raw, bid_size_raw, ask_size_raw, ts_event)
         };
-        let spread_quote = self.create_quote_tick_from_raw_prices(raw_bid, raw_ask, ts_event);
+        let Some(spread_quote) = spread_quote else {
+            return;
+        };
         self.has_update = false;
         (self.handler)(spread_quote);
     }
 
-    fn create_option_spread_prices(&mut self) -> (f64, f64) {
-        if self.disable_vega_pricing || self.vega_pricing_temporarily_disabled {
-            return self.create_futures_spread_prices();
-        }
+    /// Finalizes a net-component spread quote from the fixed-point leg sums.
+    ///
+    /// Returns `None` when the net values fall outside the representable price
+    /// or quantity ranges; the pending update is kept for the next build.
+    fn create_exact_spread_quote(
+        &self,
+        bid_raw: i128,
+        ask_raw: i128,
+        bid_size_raw: i128,
+        ask_size_raw: i128,
+        ts_event: UnixNanos,
+    ) -> Option<QuoteTick> {
+        let tick_raw = Self::raw_to_i128(self.price_increment.raw());
 
+        // The bid rounds down and the ask rounds up to the package tick, also
+        // for the negative net prices that short legs produce
+        let bid_price_raw = bid_raw.div_euclid(tick_raw) * tick_raw;
+        let ask_price_raw = -((-ask_raw).div_euclid(tick_raw) * tick_raw);
+        let (Some(bid_price), Some(ask_price)) = (
+            Self::exact_price(bid_price_raw, self.price_precision),
+            Self::exact_price(ask_price_raw, self.price_precision),
+        ) else {
+            log::error!(
+                "SpreadQuoteAggregator[{}]: net price outside the representable price range",
+                self.spread_instrument_id
+            );
+            return None;
+        };
+
+        let (Ok(bid_size_raw), Ok(ask_size_raw)) = (
+            QuantityRaw::try_from(bid_size_raw),
+            QuantityRaw::try_from(ask_size_raw),
+        ) else {
+            log::error!(
+                "SpreadQuoteAggregator[{}]: package size outside the representable quantity range",
+                self.spread_instrument_id
+            );
+            return None;
+        };
+        Some(QuoteTick::new(
+            self.spread_instrument_id,
+            bid_price,
+            ask_price,
+            Quantity::from_raw(bid_size_raw, self.size_precision),
+            Quantity::from_raw(ask_size_raw, self.size_precision),
+            ts_event,
+            ts_event,
+        ))
+    }
+
+    /// Converts a raw net price to a `Price` at the spread display precision, rejecting
+    /// unrepresentable values.
+    fn exact_price(raw: i128, precision: u8) -> Option<Price> {
+        Price::from_raw_checked(PriceRaw::try_from(raw).ok()?, precision).ok()
+    }
+
+    /// Widens a raw fixed-point value for exact arithmetic; valid raws always fit i128.
+    fn raw_to_i128<T: TryInto<i128>>(raw: T) -> i128
+    where
+        T::Error: std::fmt::Debug,
+    {
+        raw.try_into()
+            .expect("raw fixed-point value exceeds the i128 range")
+    }
+
+    /// VEGA-weighted spread prices from the stored leg observations, or `None`
+    /// when no leg carries vega data (the caller falls back to net-component
+    /// pricing).
+    fn create_option_spread_prices(&mut self) -> Option<(f64, f64)> {
         let (vega_multiplier_sum, vega_multiplier_count) = (0..self.leg_ids.len())
             .filter_map(|i| {
                 let multiplier = if self.vegas[i] == 0.0 {
@@ -2405,7 +2561,7 @@ impl SpreadQuoteAggregator {
                 self.vega_pricing_timeout_seconds
             );
             self.start_vega_pricing_timeout();
-            return self.create_futures_spread_prices();
+            return None;
         }
         let vega_multiplier = vega_multiplier_sum / vega_multiplier_count as f64;
         let spread_vega = self
@@ -2424,7 +2580,7 @@ impl SpreadQuoteAggregator {
             .sum();
         let raw_bid = spread_mid_price - bid_ask_spread * 0.5;
         let raw_ask = spread_mid_price + bid_ask_spread * 0.5;
-        (raw_bid, raw_ask)
+        Some((raw_bid, raw_ask))
     }
 
     fn clear_vega_pricing_timeout(&mut self) {
@@ -2464,23 +2620,6 @@ impl SpreadQuoteAggregator {
                 Some(true),
             )
             .expect("Failed to set spread quote vega pricing timeout");
-    }
-
-    fn create_futures_spread_prices(&self) -> (f64, f64) {
-        let mut raw_ask = 0.0_f64;
-        let mut raw_bid = 0.0_f64;
-
-        for i in 0..self.leg_ids.len() {
-            let r = self.ratios[i] as f64;
-            if self.ratios[i] >= 0 {
-                raw_ask += r * self.ask_prices[i];
-                raw_bid += r * self.bid_prices[i];
-            } else {
-                raw_ask += r * self.bid_prices[i];
-                raw_bid += r * self.ask_prices[i];
-            }
-        }
-        (raw_bid, raw_ask)
     }
 
     fn create_quote_tick_from_raw_prices(
@@ -6765,6 +6904,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock,
             false,
@@ -6772,6 +6912,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -6819,6 +6960,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock,
             false,
@@ -6826,6 +6968,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -6873,6 +7016,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock,
             false,
@@ -6880,6 +7024,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -6927,6 +7072,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock.clone(),
             false,
@@ -6934,6 +7080,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -7002,6 +7149,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             // need clock for set_clock after
             clock.clone(),
@@ -7010,6 +7158,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -7075,6 +7224,7 @@ mod tests {
             true,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             // need clock for set_clock after
             clock.clone(),
@@ -7083,6 +7233,7 @@ mod tests {
             0,
             false,
             60,
+            None,
             None,
             None,
         );
@@ -7144,6 +7295,7 @@ mod tests {
             false,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock,
             false,
@@ -7152,6 +7304,7 @@ mod tests {
             false,
             60,
             Some(Box::new(vega_provider)),
+            None,
             None,
         );
 
@@ -7206,6 +7359,7 @@ mod tests {
             false,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock.clone(),
             false,
@@ -7214,6 +7368,7 @@ mod tests {
             false,
             1,
             Some(Box::new(vega_provider)),
+            None,
             None,
         );
         let rc = Rc::new(RefCell::new(agg));
@@ -7275,6 +7430,7 @@ mod tests {
             false,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock.clone(),
             false,
@@ -7283,6 +7439,7 @@ mod tests {
             false,
             10,
             Some(Box::new(cancel_vega_provider)),
+            None,
             None,
         );
         let cancel_rc = Rc::new(RefCell::new(cancel_agg));
@@ -7332,6 +7489,7 @@ mod tests {
             false,
             instrument.price_precision(),
             0,
+            Price::from("0.01"),
             Box::new(record),
             Rc::new(RefCell::new(VirtualClock::new())),
             false,
@@ -7340,6 +7498,7 @@ mod tests {
             true,
             1,
             Some(Box::new(permanent_vega_provider)),
+            None,
             None,
         );
 
@@ -7386,6 +7545,7 @@ mod tests {
             true,
             2,
             0,
+            Price::from("0.01"),
             Box::new(record),
             clock,
             false,
@@ -7395,6 +7555,7 @@ mod tests {
             60,
             None,
             Some(Box::new(rounder)),
+            None,
         );
 
         let ts = UnixNanos::from(1_000_000_000);
@@ -7422,6 +7583,217 @@ mod tests {
         assert!(q.bid_price.as_f64() < 0.0);
         assert!(q.ask_price.as_f64() < 0.0);
         assert!(q.bid_price < q.ask_price);
+    }
+
+    #[rstest]
+    fn test_spread_quote_net_prices_round_outward_to_the_package_tick(equity_aapl: Equity) {
+        let instrument = InstrumentAny::Equity(equity_aapl);
+        let leg1 = instrument.id();
+        let leg2 = InstrumentId::from("MSFT.XNAS");
+        let spread_id = InstrumentId::from("SPREAD.XNAS");
+        let legs = vec![(leg1, 1_i64), (leg2, -1_i64)];
+        let (handler, record) = recording_handler();
+        let clock = Rc::new(RefCell::new(VirtualClock::new()));
+
+        let mut agg = SpreadQuoteAggregator::new(
+            spread_id,
+            &legs,
+            true,
+            2,
+            0,
+            Price::from("0.05"),
+            Box::new(record),
+            clock,
+            false,
+            None,
+            0,
+            false,
+            60,
+            None,
+            None,
+            None,
+        );
+
+        let ts = UnixNanos::from(1_000_000_000);
+        agg.handle_quote_tick(QuoteTick::new(
+            leg1,
+            Price::from("1.01"),
+            Price::from("1.04"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts,
+            ts,
+        ));
+        agg.handle_quote_tick(QuoteTick::new(
+            leg2,
+            Price::from("1.97"),
+            Price::from("2.03"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts,
+            ts,
+        ));
+
+        let quotes = handler.lock();
+        assert_eq!(quotes.len(), 1);
+        let q = &quotes[0];
+        // 1.01 - 2.03 = -1.02 rounds down; 1.04 - 1.97 = -0.93 rounds up
+        assert_eq!(q.bid_price, Price::from("-1.05"));
+        assert_eq!(q.ask_price, Price::from("-0.90"));
+        assert_eq!(q.bid_size, Quantity::from(10));
+        assert_eq!(q.ask_size, Quantity::from(10));
+        assert_eq!(q.ts_event, ts);
+        assert_eq!(q.ts_init, ts);
+    }
+
+    #[rstest]
+    fn test_spread_quote_sizes_floor_to_whole_packages(equity_aapl: Equity) {
+        let instrument = InstrumentAny::Equity(equity_aapl);
+        let leg1 = instrument.id();
+        let leg2 = InstrumentId::from("MSFT.XNAS");
+        let spread_id = InstrumentId::from("SPREAD.XNAS");
+        let legs = vec![(leg1, 2_i64), (leg2, -1_i64)];
+        let (handler, record) = recording_handler();
+        let clock = Rc::new(RefCell::new(VirtualClock::new()));
+
+        let mut agg = SpreadQuoteAggregator::new(
+            spread_id,
+            &legs,
+            true,
+            2,
+            1,
+            Price::from("0.05"),
+            Box::new(record),
+            clock,
+            false,
+            None,
+            0,
+            false,
+            60,
+            None,
+            None,
+            None,
+        );
+
+        let ts = UnixNanos::from(1_000_000_000);
+        agg.handle_quote_tick(QuoteTick::new(
+            leg1,
+            Price::from("1.00"),
+            Price::from("1.05"),
+            Quantity::from("5.5"),
+            Quantity::from("5.5"),
+            ts,
+            ts,
+        ));
+        agg.handle_quote_tick(QuoteTick::new(
+            leg2,
+            Price::from("2.00"),
+            Price::from("2.05"),
+            Quantity::from("9.0"),
+            Quantity::from("9.0"),
+            ts,
+            ts,
+        ));
+
+        let quotes = handler.lock();
+        assert_eq!(quotes.len(), 1);
+        let q = &quotes[0];
+        assert_eq!(q.bid_price, Price::from("-0.05"));
+        assert_eq!(q.ask_price, Price::from("0.10"));
+        // leg1 needs whole packages of 2: floor(5.5 / 2) = 2
+        assert_eq!(q.bid_size, Quantity::from("2.0"));
+        assert_eq!(q.ask_size, Quantity::from("2.0"));
+    }
+
+    #[rstest]
+    fn test_spread_quote_suppresses_stale_and_future_legs(equity_aapl: Equity) {
+        let instrument = InstrumentAny::Equity(equity_aapl);
+        let leg1 = instrument.id();
+        let leg2 = InstrumentId::from("MSFT.XNAS");
+        let spread_id = InstrumentId::from("SPREAD.XNAS");
+        let legs = vec![(leg1, 1_i64), (leg2, -1_i64)];
+        let (handler, record) = recording_handler();
+        let clock = Rc::new(RefCell::new(VirtualClock::new()));
+
+        let mut agg = SpreadQuoteAggregator::new(
+            spread_id,
+            &legs,
+            true,
+            2,
+            0,
+            Price::from("0.05"),
+            Box::new(record),
+            clock,
+            false,
+            None,
+            0,
+            false,
+            60,
+            None,
+            None,
+            Some(100),
+        );
+
+        let ts1 = UnixNanos::from(10);
+        agg.handle_quote_tick(QuoteTick::new(
+            leg1,
+            Price::from("1.00"),
+            Price::from("1.05"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts1,
+            ts1,
+        ));
+        agg.handle_quote_tick(QuoteTick::new(
+            leg2,
+            Price::from("2.00"),
+            Price::from("2.05"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts1,
+            ts1,
+        ));
+        {
+            let quotes = handler.lock();
+            assert_eq!(quotes.len(), 1);
+            assert_eq!(quotes[0].bid_price, Price::from("-1.05"));
+            assert_eq!(quotes[0].ask_price, Price::from("-0.95"));
+        }
+
+        // A leg quote 190ns old exceeds the 100ns freshness limit: suppress,
+        // keeping the pending update for the next accepted observation
+        let ts2 = UnixNanos::from(200);
+        agg.handle_quote_tick(QuoteTick::new(
+            leg2,
+            Price::from("3.00"),
+            Price::from("3.05"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts2,
+            ts2,
+        ));
+        assert_eq!(handler.lock().len(), 1);
+
+        // A build triggered before the stored leg timestamp is suppressed
+        agg.on_timer_fire(UnixNanos::from(100));
+        assert_eq!(handler.lock().len(), 1);
+
+        // Both legs fresh again: the suppressed update publishes
+        let ts3 = UnixNanos::from(210);
+        agg.handle_quote_tick(QuoteTick::new(
+            leg1,
+            Price::from("1.10"),
+            Price::from("1.15"),
+            Quantity::from(10),
+            Quantity::from(10),
+            ts3,
+            ts3,
+        ));
+        let quotes = handler.lock();
+        assert_eq!(quotes.len(), 2);
+        assert_eq!(quotes[1].bid_price, Price::from("-1.95"));
+        assert_eq!(quotes[1].ask_price, Price::from("-1.85"));
+        assert_eq!(quotes[1].ts_event, ts3);
     }
 
     #[rstest]
@@ -8252,8 +8624,9 @@ mod property_tests {
     use nautilus_common::{clock::VirtualClock, timer::TimeEvent};
     use nautilus_core::{UUID4, UnixNanos};
     use nautilus_model::{
-        data::{Bar, BarSpecification, BarType, TradeTick, bar::get_bar_interval_ns},
+        data::{Bar, BarSpecification, BarType, QuoteTick, TradeTick, bar::get_bar_interval_ns},
         enums::{AggregationSource, AggressorSide, BarAggregation, BarIntervalType, PriceType},
+        identifiers::InstrumentId,
         instruments::{Instrument, InstrumentAny, stubs::equity_aapl},
         types::{Price, Quantity},
     };
@@ -9083,6 +9456,114 @@ mod property_tests {
                 // which also guarantees the loop division never sees a zero divisor.
                 prop_assert!(aggregator.get_cumulative_value() < step_decimal);
             }
+        }
+
+        #[rstest]
+        fn prop_exact_component_prices_match_decimal_reference(
+            legs in prop::collection::vec(
+                (
+                    prop_oneof![1i64..=3, -3i64..=-1],
+                    100u32..=500_000u32,
+                    1u32..=50u32,
+                    0u32..=2_000u32,
+                    0u32..=2_000u32,
+                ),
+                2..=4,
+            ),
+        ) {
+            let (handler, record) = recording_handler();
+            let clock = Rc::new(RefCell::new(VirtualClock::new()));
+
+            let leg_specs: Vec<(InstrumentId, i64)> = legs
+                .iter()
+                .enumerate()
+                .map(|(i, (ratio, ..))| {
+                    (InstrumentId::from(format!("LEG{i}.SIM").as_str()), *ratio)
+                })
+                .collect();
+            let spread_id = InstrumentId::from("SPREAD.SIM");
+
+            let mut agg = SpreadQuoteAggregator::new(
+                spread_id,
+                &leg_specs,
+                true,
+                2,
+                1,Price::from("0.01"),
+                Box::new(record),
+                clock,
+                false,
+                None,
+                0,
+                false,
+                60,
+                None,
+                None,
+            None,
+        );
+
+            let ts = UnixNanos::from(1);
+            for (i, (_, bid_cents, spread_cents, bid_tenths, ask_tenths)) in
+                legs.iter().enumerate()
+            {
+                // Parse from decimal strings: `Price`/`Quantity` raw values are stored
+                // at the fixed-point scale (value * 10^FIXED_PRECISION), so `from_raw`
+                // with a display-precision-scaled integer would misplace the decimal
+                let bid_cents = u64::from(*bid_cents);
+                let spread_cents = u64::from(*spread_cents);
+                agg.handle_quote_tick(QuoteTick::new(
+                    leg_specs[i].0,
+                    Price::from(format!("{}.{:02}", bid_cents / 100, bid_cents % 100).as_str()),
+                    Price::from(
+                        format!(
+                            "{}.{:02}",
+                            (bid_cents + spread_cents) / 100,
+                            (bid_cents + spread_cents) % 100
+                        )
+                        .as_str(),
+                    ),
+                    Quantity::from(format!("{}.{}", bid_tenths / 10, bid_tenths % 10).as_str()),
+                    Quantity::from(format!("{}.{}", ask_tenths / 10, ask_tenths % 10).as_str()),
+                    ts,
+                    ts,
+                ));
+            }
+
+            // Decimal reference: outward tick rounding of the signed-ratio net
+            // prices and whole-package flooring of the ratio-adjusted sizes
+            let tick = Decimal::new(1, 2);
+            let mut exp_bid = Decimal::ZERO;
+            let mut exp_ask = Decimal::ZERO;
+            let mut exp_bid_size: Option<Decimal> = None;
+            let mut exp_ask_size: Option<Decimal> = None;
+            for (ratio, bid_cents, spread_cents, bid_tenths, ask_tenths) in &legs {
+                let leg_bid = Decimal::new(i64::from(*bid_cents), 2);
+                let leg_ask = Decimal::new(i64::from(bid_cents + spread_cents), 2);
+                let leg_bid_size = Decimal::new(i64::from(*bid_tenths), 1);
+                let leg_ask_size = Decimal::new(i64::from(*ask_tenths), 1);
+                let (side_bid, side_ask, side_bid_size, side_ask_size) = if *ratio >= 0 {
+                    (leg_bid, leg_ask, leg_bid_size, leg_ask_size)
+                } else {
+                    (leg_ask, leg_bid, leg_ask_size, leg_bid_size)
+                };
+                let weight = Decimal::from(*ratio);
+                exp_bid += weight * side_bid;
+                exp_ask += weight * side_ask;
+                let package = Decimal::from(ratio.abs());
+                let bid_packages = (side_bid_size / package).floor();
+                let ask_packages = (side_ask_size / package).floor();
+                exp_bid_size = Some(exp_bid_size.map_or(bid_packages, |d| d.min(bid_packages)));
+                exp_ask_size = Some(exp_ask_size.map_or(ask_packages, |d| d.min(ask_packages)));
+            }
+            let exp_bid = (exp_bid / tick).floor() * tick;
+            let exp_ask = (exp_ask / tick).ceil() * tick;
+
+            let quotes = handler.lock();
+            prop_assert_eq!(quotes.len(), 1);
+            let q = &quotes[0];
+            prop_assert_eq!(q.bid_price.as_decimal(), exp_bid);
+            prop_assert_eq!(q.ask_price.as_decimal(), exp_ask);
+            prop_assert_eq!(q.bid_size.as_decimal(), exp_bid_size.unwrap());
+            prop_assert_eq!(q.ask_size.as_decimal(), exp_ask_size.unwrap());
         }
     }
 }

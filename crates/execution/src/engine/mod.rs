@@ -4067,13 +4067,16 @@ impl ExecutionEngine {
             account.is_margin_account()
         };
 
-        // Skip portfolio position updates for combo fills (spread instruments)
-        // Combo fills are only used for order management, not portfolio updates
+        // Skip portfolio position updates for combo fills (spread instruments).
+        // A package fill is order-management-only: the correlated component
+        // accounting fills dispatched alongside it book cash, commissions, and
+        // component positions on their own leg instruments.
         if !instrument.is_spread() && is_margin_account {
             let portfolio_endpoint = MessagingSwitchboard::portfolio_update_order();
             msgbus::send_order_event(portfolio_endpoint, OrderEventAny::Filled(fill.clone()));
         }
 
+        // Spread instrument fills bypass position state
         let (position, position_events) = if instrument.is_spread() {
             (None, Vec::new())
         } else {

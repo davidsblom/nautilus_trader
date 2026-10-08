@@ -43,12 +43,13 @@ pub const PARAMS_IS_PARENT: &str = "is_parent";
 pub use request::{
     RequestBars, RequestBookDeltas, RequestBookDepth, RequestBookSnapshot, RequestCustomData,
     RequestFundingRates, RequestInstrument, RequestInstruments, RequestJoin,
-    RequestOptionChainReferencePrice, RequestQuotes, RequestTrades,
+    RequestOptionChainReferencePrice, RequestQuotes, RequestSpread, RequestTrades,
 };
 pub use response::{
     BarsResponse, BookDeltasResponse, BookDepthResponse, BookResponse, CustomDataResponse,
     FundingRatesResponse, InstrumentResponse, InstrumentsResponse,
-    OptionChainReferencePriceResponse, QuotesResponse, TradesResponse,
+    OptionChainReferencePriceResponse, QuotesResponse, SpreadRegistrationOutcome,
+    SpreadRegistrationResponse, TradesResponse,
 };
 pub use subscribe::{
     SubscribeBars, SubscribeBookDeltas, SubscribeBookDepth, SubscribeBookSnapshots,
@@ -609,6 +610,7 @@ pub enum RequestCommand {
     OptionChainReferencePrice(RequestOptionChainReferencePrice),
     Bars(RequestBars),
     Join(RequestJoin),
+    Spread(RequestSpread),
 }
 
 impl PartialEq for RequestCommand {
@@ -637,6 +639,7 @@ impl RequestCommand {
             Self::OptionChainReferencePrice(cmd) => &cmd.request_id,
             Self::Bars(cmd) => &cmd.request_id,
             Self::Join(cmd) => &cmd.request_id,
+            Self::Spread(cmd) => &cmd.request_id,
         }
     }
 
@@ -654,6 +657,7 @@ impl RequestCommand {
             Self::OptionChainReferencePrice(cmd) => cmd.client_id.as_ref(),
             Self::Bars(cmd) => cmd.client_id.as_ref(),
             Self::Join(_) => None,
+            Self::Spread(cmd) => cmd.client_id.as_ref(),
         }
     }
 
@@ -675,6 +679,7 @@ impl RequestCommand {
                 BarType::Composite { instrument_id, .. } => Some(&instrument_id.venue),
             },
             Self::Join(_) => None,
+            Self::Spread(_) => None,
         }
     }
 
@@ -692,6 +697,7 @@ impl RequestCommand {
             Self::OptionChainReferencePrice(cmd) => cmd.ts_init,
             Self::Bars(cmd) => cmd.ts_init,
             Self::Join(cmd) => cmd.ts_init,
+            Self::Spread(cmd) => cmd.ts_init,
         }
     }
 }
@@ -709,6 +715,7 @@ pub enum DataResponse {
     FundingRates(FundingRatesResponse),
     OptionChainReferencePrice(OptionChainReferencePriceResponse),
     Bars(BarsResponse),
+    Spread(Box<SpreadRegistrationResponse>),
 }
 
 impl DataResponse {
@@ -730,6 +737,7 @@ impl DataResponse {
             Self::FundingRates(resp) => &resp.correlation_id,
             Self::OptionChainReferencePrice(resp) => &resp.correlation_id,
             Self::Bars(resp) => &resp.correlation_id,
+            Self::Spread(resp) => &resp.correlation_id,
         }
     }
 
@@ -748,6 +756,7 @@ impl DataResponse {
             Self::FundingRates(_) => "FundingRates",
             Self::OptionChainReferencePrice(_) => "OptionChainReferencePrice",
             Self::Bars(_) => "Bars",
+            Self::Spread(_) => "Spread",
         }
     }
 
@@ -767,6 +776,7 @@ impl DataResponse {
             Self::FundingRates(resp) => Some(resp.data.len()),
             Self::OptionChainReferencePrice(_) => None,
             Self::Bars(resp) => Some(resp.data.len()),
+            Self::Spread(_) => None,
         }
     }
 
@@ -790,7 +800,8 @@ impl DataResponse {
             Self::Data(_)
             | Self::Instrument(_)
             | Self::Book(_)
-            | Self::OptionChainReferencePrice(_) => {}
+            | Self::OptionChainReferencePrice(_)
+            | Self::Spread(_) => {}
         }
     }
 }

@@ -1370,6 +1370,7 @@ pub fn send_response(correlation_id: &UUID4, message: &DataResponse) {
             DataResponse::FundingRates(resp) => handler.0.handle(resp),
             DataResponse::OptionChainReferencePrice(resp) => handler.0.handle(resp),
             DataResponse::Bars(resp) => handler.0.handle(resp),
+            DataResponse::Spread(resp) => handler.0.handle(resp.as_ref()),
         }
     } else {
         log::error!("send_response: handler not found for correlation_id '{correlation_id}'");

@@ -20,6 +20,7 @@ use nautilus_core::{Params, UUID4, UnixNanos};
 use nautilus_model::{
     data::{BarType, DataType},
     identifiers::{ClientId, InstrumentId, OptionSeriesId, Venue},
+    types::Quantity,
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +90,45 @@ impl RequestInstrument {
             instrument_id,
             start,
             end,
+            client_id,
+            request_id,
+            ts_init,
+            params,
+        }
+    }
+}
+
+/// A request to register a synthetic spread instrument from named legs.
+///
+/// Each entry carries an already-registered component instrument ID and its
+/// signed integer ratio in the package. The engine validates the request
+/// against its instrument cache and, when valid, registers a spread
+/// instrument whose identifier deterministically encodes the legs and ratios,
+/// then answers with a correlated
+/// [`SpreadRegistrationResponse`](super::response::SpreadRegistrationResponse).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RequestSpread {
+    pub legs: Vec<(InstrumentId, i64)>,
+    pub multiplier: Quantity,
+    pub client_id: Option<ClientId>,
+    pub request_id: UUID4,
+    pub ts_init: UnixNanos,
+    pub params: Option<Params>,
+}
+
+impl RequestSpread {
+    /// Creates a new [`RequestSpread`] instance.
+    pub fn new(
+        legs: Vec<(InstrumentId, i64)>,
+        multiplier: Quantity,
+        client_id: Option<ClientId>,
+        request_id: UUID4,
+        ts_init: UnixNanos,
+        params: Option<Params>,
+    ) -> Self {
+        Self {
+            legs,
+            multiplier,
             client_id,
             request_id,
             ts_init,

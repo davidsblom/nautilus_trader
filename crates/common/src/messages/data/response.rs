@@ -170,6 +170,52 @@ impl InstrumentResponse {
     }
 }
 
+/// The outcome of a spread registration request.
+#[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum SpreadRegistrationOutcome {
+    /// The spread instrument was registered and is ready for order submission.
+    Ready(InstrumentAny),
+    /// The request was rejected and no instrument was registered.
+    Rejected { reason: String },
+}
+
+/// The engine's answer to a [`RequestSpread`](super::request::RequestSpread).
+///
+/// `outcome` is [`Ready`][SpreadRegistrationOutcome::Ready] when the spread
+/// instrument was validated and registered through the engine lifecycle, and
+/// [`Rejected`][SpreadRegistrationOutcome::Rejected] — carrying a descriptive
+/// reason — when validation failed and nothing was registered.
+#[derive(Clone, Debug)]
+pub struct SpreadRegistrationResponse {
+    pub correlation_id: UUID4,
+    pub outcome: SpreadRegistrationOutcome,
+    pub ts_init: UnixNanos,
+    pub params: Option<Params>,
+}
+
+impl SpreadRegistrationResponse {
+    /// Creates a new [`SpreadRegistrationResponse`] instance.
+    pub fn new(
+        correlation_id: UUID4,
+        outcome: SpreadRegistrationOutcome,
+        ts_init: UnixNanos,
+        params: Option<Params>,
+    ) -> Self {
+        Self {
+            correlation_id,
+            outcome,
+            ts_init,
+            params,
+        }
+    }
+
+    /// Converts to a dyn Any trait object for messaging.
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstrumentsResponse {
     pub correlation_id: UUID4,

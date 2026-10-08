@@ -38,6 +38,10 @@ use nautilus_common::{
         logging_clock_set_realtime_mode, logging_clock_set_static_mode,
         logging_clock_set_static_time,
     },
+    messages::data::{
+        DataResponse, RequestSpread, SpreadRegistrationOutcome, SpreadRegistrationResponse,
+    },
+    msgbus,
     runner::{
         SyncDataCommandSender, SyncTradingCommandSender, clear_command_queues,
         data_cmd_queue_is_empty, drain_data_cmd_queue, drain_trading_cmd_queue,
@@ -55,9 +59,14 @@ use nautilus_model::{
     accounts::{Account, AccountAny},
     data::{Data, DataBatch, DataRef, HasTsInit},
     enums::{AccountType, AggregationSource, BookType},
-    identifiers::{AccountId, ClientId, InstrumentId, StrategyId, TraderId, Venue},
-    instruments::{Instrument, InstrumentAny},
+    identifiers::{
+        AccountId, ClientId, GENERIC_SPREAD_ID_SEPARATOR, InstrumentId, StrategyId, Symbol,
+        TraderId, Venue, new_generic_spread_id,
+    },
+    instruments::{Instrument, InstrumentAny, OptionContract, option_spread::OptionSpread},
     position::Position,
+    types::price::PriceRaw,
+    types::{Price, Quantity},
 };
 use nautilus_portfolio::portfolio::is_snapshot_timer;
 #[cfg(feature = "python")]
@@ -67,6 +76,7 @@ use nautilus_trading::{
     ExecutionAlgorithm, ExecutionAlgorithmNative,
     strategy::{Strategy, StrategyNative},
 };
+use ustr::Ustr;
 
 use crate::{
     accumulator::TimeEventAccumulator,
@@ -82,6 +92,16 @@ use crate::{
 };
 
 const CALLBACK_DRAIN_BUDGET: usize = 1024;
+
+/// A spread registration leg resolved against the instrument cache.
+struct OptionSpreadLeg {
+    /// The leg instrument identifier.
+    instrument_id: InstrumentId,
+    /// The signed leg ratio within the spread.
+    ratio: i64,
+    /// The cached leg instrument.
+    instrument: InstrumentAny,
+}
 
 /// Core backtesting engine for running event-driven strategy backtests on historical data.
 ///
@@ -937,6 +957,11 @@ impl BacktestEngine {
             };
             self.data_iterator.advance();
 
+            // Spread registration safe point: data callbacks have returned;
+            // answer any intercepted spread requests before trading command
+            // processing so mid-run registrations never race later commands.
+            self.process_spread_request_safe_point()?;
+
             // Drain deferred commands, then process exchange queues
             self.drain_command_queues()?;
             self.settle_venues(ts_init, settlement_scope)?;
@@ -950,6 +975,20 @@ impl BacktestEngine {
             {
                 self.flush_accumulator_events(&clocks, prev_last_ns)?;
                 self.finalize_timestamp(&clocks, prev_last_ns, settlement_scope)?;
+
+                // Timer-originated spread requests (queued during flush or
+                // finalize callbacks) are answered after finalize completes.
+                // The gate keeps the pass a no-op for iterations that queued
+                // nothing, so ordinary timer-origin trading commands keep
+                // their existing timing.
+                if self
+                    .kernel
+                    .data_engine
+                    .borrow()
+                    .has_pending_spread_requests()
+                {
+                    self.process_spread_request_safe_point()?;
+                }
             }
 
             self.iteration += 1;
@@ -2202,6 +2241,291 @@ impl BacktestEngine {
         replace_exec_cmd_sender(Arc::new(SyncTradingCommandSender));
     }
 
+    /// Answers intercepted spread registration requests at the current safe
+    /// point.
+    ///
+    /// Each iteration drains the deferred command queues (a response handler
+    /// may submit trading or data commands synchronously), then drains the
+    /// pending spread request queue and answers every request with a
+    /// [`SpreadRegistrationResponse`] sent directly over the message bus. The
+    /// loop repeats until both sources are quiet, so a handler that requests
+    /// another spread registration is also served. Processing stops at the
+    /// first registration failure; the failing request is answered with a
+    /// rejection and the remaining requests are still processed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from [`Self::drain_command_queues`].
+    fn process_spread_request_safe_point(&mut self) -> anyhow::Result<()> {
+        loop {
+            self.drain_command_queues()?;
+
+            let pending = self
+                .kernel
+                .data_engine
+                .borrow_mut()
+                .take_pending_spread_requests();
+            if pending.is_empty() {
+                break;
+            }
+
+            for request in pending {
+                let outcome = self.register_spread(&request);
+                let ts_init = self.kernel.clock.borrow().timestamp_ns();
+                let response = SpreadRegistrationResponse::new(
+                    request.request_id,
+                    match outcome {
+                        Ok(spread) => {
+                            SpreadRegistrationOutcome::Ready(InstrumentAny::OptionSpread(spread))
+                        }
+                        Err(ref error) => SpreadRegistrationOutcome::Rejected {
+                            reason: error.to_string(),
+                        },
+                    },
+                    ts_init,
+                    request.params.clone(),
+                );
+                msgbus::send_response(
+                    &request.request_id,
+                    &DataResponse::Spread(Box::new(response)),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates and registers the spread instrument requested by `request`.
+    ///
+    /// Validation mirrors the canonical spread identifier grammar: legs are
+    /// resolved from the cache, then checked for count, uniqueness, nonzero
+    /// ratios, encodable symbols, a shared venue, option contracts, and shared
+    /// expiration, quote currency, and multiplier equal to the requested
+    /// multiplier. A request whose spread identifier is already registered is
+    /// answered with the cached instrument unchanged.
+    fn register_spread(&mut self, request: &RequestSpread) -> anyhow::Result<OptionSpread> {
+        let mut cached_legs: Vec<OptionSpreadLeg> = Vec::with_capacity(request.legs.len());
+        let cache = self.kernel.cache.borrow();
+        for (instrument_id, ratio) in &request.legs {
+            let instrument = cache
+                .instrument(instrument_id)
+                .ok_or_else(|| anyhow::anyhow!("leg {instrument_id} not found in cache"))?;
+            cached_legs.push(OptionSpreadLeg {
+                instrument_id: *instrument_id,
+                ratio: *ratio,
+                instrument: instrument.clone(),
+            });
+        }
+        drop(cache);
+
+        if cached_legs.len() < 2 {
+            anyhow::bail!(
+                "a spread requires at least 2 legs, got {}",
+                cached_legs.len()
+            );
+        }
+        // Sorted before the adjacency scan: a request may list a
+        // duplicate leg non-adjacently, and the pairwise window only
+        // catches neighbours.
+        cached_legs.sort_by(|left, right| {
+            left.instrument_id
+                .symbol
+                .as_str()
+                .cmp(right.instrument_id.symbol.as_str())
+        });
+        for pair in cached_legs.windows(2) {
+            if pair[0].instrument_id.symbol == pair[1].instrument_id.symbol {
+                anyhow::bail!("duplicate leg {}", pair[1].instrument_id);
+            }
+        }
+        for leg in &cached_legs {
+            if leg.ratio == 0 {
+                anyhow::bail!("leg {} has zero ratio", leg.instrument_id);
+            }
+            let symbol = leg.instrument_id.symbol.as_str();
+            if symbol.contains(GENERIC_SPREAD_ID_SEPARATOR) || symbol.contains(['(', ')']) {
+                anyhow::bail!("leg {} has unencodable symbol", leg.instrument_id);
+            }
+        }
+        let venue = cached_legs[0].instrument_id.venue;
+        for leg in &cached_legs {
+            if leg.instrument_id.venue != venue {
+                anyhow::bail!(
+                    "leg {} venue {} does not match lead venue {}",
+                    leg.instrument_id,
+                    leg.instrument_id.venue,
+                    venue
+                );
+            }
+            if !matches!(leg.instrument, InstrumentAny::OptionContract(_)) {
+                anyhow::bail!("leg {} is not an option contract", leg.instrument_id);
+            }
+        }
+
+        let spread_id = new_generic_spread_id(
+            &cached_legs
+                .iter()
+                .map(|leg| (leg.instrument_id, leg.ratio))
+                .collect::<Vec<_>>(),
+        )?;
+
+        let InstrumentAny::OptionContract(lead) = &cached_legs[0].instrument else {
+            unreachable!("option contract checked above")
+        };
+        for leg in &cached_legs[1..] {
+            let InstrumentAny::OptionContract(option) = &leg.instrument else {
+                unreachable!("option contract checked above")
+            };
+            if option.expiration_ns != lead.expiration_ns {
+                anyhow::bail!(
+                    "leg {} expiration {} does not match lead expiration {}",
+                    option.id(),
+                    option.expiration_ns,
+                    lead.expiration_ns
+                );
+            }
+            if option.currency != lead.currency {
+                anyhow::bail!(
+                    "leg {} currency {} does not match lead currency {}",
+                    option.id(),
+                    option.currency.code,
+                    lead.currency.code
+                );
+            }
+            if option.multiplier != lead.multiplier {
+                anyhow::bail!(
+                    "leg {} multiplier {} does not match lead multiplier {}",
+                    option.id(),
+                    option.multiplier,
+                    lead.multiplier
+                );
+            }
+        }
+        if request.multiplier != lead.multiplier {
+            anyhow::bail!(
+                "requested multiplier {} does not match leg multiplier {}",
+                request.multiplier,
+                lead.multiplier
+            );
+        }
+
+        if let Some(existing) = self.kernel.cache.borrow().instrument(&spread_id) {
+            return match existing {
+                InstrumentAny::OptionSpread(spread) => {
+                    // The identity's defining metadata must still match what
+                    // the current cache legs derive: a replacement of the
+                    // cached legs under one identity would otherwise
+                    // silently trade against the stale definition.
+                    let (precision, increment) = Self::derived_spread_increment(&cached_legs)?;
+                    if spread.asset_class != lead.asset_class
+                        || spread.underlying != lead.underlying
+                        || spread.expiration_ns != lead.expiration_ns
+                        || spread.currency != lead.currency
+                        || spread.price_precision != precision
+                        || spread.price_increment != increment
+                        || spread.multiplier != request.multiplier
+                    {
+                        anyhow::bail!(
+                            "conflicting metadata for spread {spread_id}: the registered \
+                             definition does not match the current legs"
+                        );
+                    }
+                    Ok(spread.clone())
+                }
+                other => anyhow::bail!(
+                    "spread identifier {spread_id} already registered as a {}",
+                    other.asset_class(),
+                ),
+            };
+        }
+
+        let ts = self.kernel.clock.borrow().timestamp_ns();
+        let expiration_ns = lead.expiration_ns;
+        let spread = Self::build_spread_instrument(
+            spread_id,
+            &cached_legs,
+            lead,
+            request.multiplier,
+            expiration_ns,
+            ts,
+        )?;
+        self.add_instrument(&InstrumentAny::OptionSpread(spread.clone()))?;
+        log::info!("Registered spread instrument {}", spread.id());
+        Ok(spread)
+    }
+
+    /// Derives the package price precision and increment from the legs.
+    ///
+    /// The precision is the finest leg precision; the increment is the
+    /// greatest common divisor of the leg increments on the canonical
+    /// fixed-point raw scale, so every price expressible with the legs' own
+    /// increments is expressible for the package.
+    fn derived_spread_increment(legs: &[OptionSpreadLeg]) -> anyhow::Result<(u8, Price)> {
+        let price_precision = legs
+            .iter()
+            .map(|leg| leg.instrument.price_increment().precision)
+            .max()
+            .unwrap_or_default();
+        let increment_raw = legs.iter().try_fold(0_u128, |combined, leg| {
+            let increment = leg.instrument.price_increment();
+            // Price raw values share one canonical fixed-point scale, so the
+            // GCD consumes them directly; rescaling each leg by
+            // `10^(finest_precision - leg_precision)` would double-scale
+            // shorter-precision legs and coarsen the package increment.
+            let raw = u128::try_from(increment.raw()).map_err(|_| {
+                anyhow::anyhow!("negative price increment for {}", leg.instrument_id)
+            })?;
+            if raw == 0 {
+                Err(anyhow::anyhow!(
+                    "zero price increment for {}",
+                    leg.instrument_id
+                ))
+            } else {
+                Ok(gcd(combined, raw))
+            }
+        })?;
+        let price_increment = Price::from_raw(
+            PriceRaw::try_from(increment_raw)
+                .map_err(|_| anyhow::anyhow!("package price increment overflows"))?,
+            price_precision,
+        );
+        Ok((price_precision, price_increment))
+    }
+
+    /// Builds the package instrument for validated, cached leg instruments.
+    ///
+    /// The package price increment is the greatest common divisor of the leg
+    /// increments on the canonical fixed-point raw scale, so every price
+    /// expressible with the legs' own increments is expressible for the
+    /// package.
+    fn build_spread_instrument(
+        spread_id: InstrumentId,
+        legs: &[OptionSpreadLeg],
+        lead: &OptionContract,
+        multiplier: Quantity,
+        expiration_ns: UnixNanos,
+        ts: UnixNanos,
+    ) -> anyhow::Result<OptionSpread> {
+        let (price_precision, price_increment) = Self::derived_spread_increment(legs)?;
+
+        OptionSpread::builder()
+            .instrument_id(spread_id)
+            .raw_symbol(Symbol::new(spread_id.symbol.as_str()))
+            .asset_class(lead.asset_class)
+            .underlying(lead.underlying)
+            .strategy_type(Ustr::from("GENERIC"))
+            .activation_ns(ts)
+            .expiration_ns(expiration_ns)
+            .currency(lead.currency)
+            .price_precision(price_precision)
+            .price_increment(price_increment)
+            .multiplier(multiplier)
+            .lot_size(Quantity::from(1))
+            .ts_event(ts)
+            .ts_init(ts)
+            .build()
+            .map_err(|error| anyhow::anyhow!("invalid spread instrument: {error}"))
+    }
+
     fn advance_clock_on_accumulator(
         accumulator: &mut TimeEventAccumulator,
         clock: &Rc<RefCell<dyn Clock>>,
@@ -2393,6 +2717,15 @@ fn format_optional_uuid(uuid: Option<&UUID4>) -> String {
 
 fn event_count_as_usize(event_count: u64) -> usize {
     usize::try_from(event_count).expect("execution event count fits usize")
+}
+
+/// The greatest common divisor of two nonnegative integers, with `gcd(0, b) ==
+/// b`, so folding over leg increments from zero yields their combined divisor.
+const fn gcd(mut left: u128, mut right: u128) -> u128 {
+    while right != 0 {
+        (left, right) = (right, left % right);
+    }
+    left
 }
 
 fn format_optional_duration(start: Option<UnixNanos>, end: Option<UnixNanos>) -> String {
@@ -4587,5 +4920,58 @@ mod tests {
             .unwrap()
             .market_status;
         assert_eq!(market_status, MarketStatus::Closed);
+    }
+
+    fn spread_test_leg(instrument_id: &str, precision: u8, increment: &str) -> OptionSpreadLeg {
+        let instrument = OptionContract::builder()
+            .instrument_id(InstrumentId::from(instrument_id))
+            .raw_symbol(Symbol::from(instrument_id.split('.').next().unwrap()))
+            .asset_class(nautilus_model::enums::AssetClass::Equity)
+            .exchange(Ustr::from("XCME"))
+            .underlying(Ustr::from("SPX"))
+            .option_kind(nautilus_model::enums::OptionKind::Call)
+            .strike_price(Price::from("5000.0"))
+            .currency(nautilus_model::types::currency::Currency::USD())
+            .activation_ns(nautilus_core::UnixNanos::from(1))
+            .expiration_ns(nautilus_core::UnixNanos::from(2))
+            .price_precision(precision)
+            .price_increment(Price::from(increment))
+            .multiplier(Quantity::from(100))
+            .lot_size(Quantity::from(1))
+            .ts_event(nautilus_core::UnixNanos::default())
+            .ts_init(nautilus_core::UnixNanos::default())
+            .build()
+            .unwrap();
+        OptionSpreadLeg {
+            instrument_id: InstrumentId::from(instrument_id),
+            ratio: 1,
+            instrument: InstrumentAny::OptionContract(instrument),
+        }
+    }
+
+    #[test]
+    fn test_derived_spread_increment_mixed_precisions() {
+        let legs = vec![
+            spread_test_leg("SPXW251003C05000000.XCME", 1, "0.1"),
+            spread_test_leg("SPXW251003P05000000.XCME", 2, "0.25"),
+        ];
+
+        let (precision, increment) = BacktestEngine::derived_spread_increment(&legs).unwrap();
+
+        assert_eq!(precision, 2);
+        assert_eq!(increment, Price::from("0.05"));
+    }
+
+    #[test]
+    fn test_derived_spread_increment_equal_precisions() {
+        let legs = vec![
+            spread_test_leg("SPXW251003C05100000.XCME", 2, "0.01"),
+            spread_test_leg("SPXW251003P05200000.XCME", 2, "0.03"),
+        ];
+
+        let (precision, increment) = BacktestEngine::derived_spread_increment(&legs).unwrap();
+
+        assert_eq!(precision, 2);
+        assert_eq!(increment, Price::from("0.01"));
     }
 }

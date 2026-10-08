@@ -42,6 +42,7 @@ use nautilus_model::{
     identifiers::{ActorId, ClientId, ComponentId, InstrumentId, OptionSeriesId, TraderId, Venue},
     instruments::{InstrumentAny, SyntheticInstrument},
     orderbook::OrderBook,
+    types::Quantity,
 };
 use serde::{Deserialize, Serialize};
 use ustr::Ustr;
@@ -71,17 +72,18 @@ use crate::{
             DataCommand, FundingRatesResponse, InstrumentResponse, InstrumentsResponse,
             QuotesResponse, RequestBars, RequestBookDeltas, RequestBookDepth, RequestBookSnapshot,
             RequestCommand, RequestCustomData, RequestFundingRates, RequestInstrument,
-            RequestInstruments, RequestQuotes, RequestTrades, SubscribeBars, SubscribeBookDeltas,
-            SubscribeBookDepth, SubscribeBookSnapshots, SubscribeCommand, SubscribeCustomData,
-            SubscribeFundingRates, SubscribeIndexPrices, SubscribeInstrument,
-            SubscribeInstrumentClose, SubscribeInstrumentStatus, SubscribeInstruments,
-            SubscribeMarkPrices, SubscribeOptionChain, SubscribeOptionGreeks, SubscribeQuotes,
-            SubscribeTrades, TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas,
-            UnsubscribeBookDepth, UnsubscribeBookSnapshots, UnsubscribeCommand,
-            UnsubscribeCustomData, UnsubscribeFundingRates, UnsubscribeIndexPrices,
-            UnsubscribeInstrument, UnsubscribeInstrumentClose, UnsubscribeInstrumentStatus,
-            UnsubscribeInstruments, UnsubscribeMarkPrices, UnsubscribeOptionChain,
-            UnsubscribeOptionGreeks, UnsubscribeQuotes, UnsubscribeTrades, is_parent_subscription,
+            RequestInstruments, RequestQuotes, RequestSpread, RequestTrades,
+            SpreadRegistrationResponse, SubscribeBars, SubscribeBookDeltas, SubscribeBookDepth,
+            SubscribeBookSnapshots, SubscribeCommand, SubscribeCustomData, SubscribeFundingRates,
+            SubscribeIndexPrices, SubscribeInstrument, SubscribeInstrumentClose,
+            SubscribeInstrumentStatus, SubscribeInstruments, SubscribeMarkPrices,
+            SubscribeOptionChain, SubscribeOptionGreeks, SubscribeQuotes, SubscribeTrades,
+            TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas, UnsubscribeBookDepth,
+            UnsubscribeBookSnapshots, UnsubscribeCommand, UnsubscribeCustomData,
+            UnsubscribeFundingRates, UnsubscribeIndexPrices, UnsubscribeInstrument,
+            UnsubscribeInstrumentClose, UnsubscribeInstrumentStatus, UnsubscribeInstruments,
+            UnsubscribeMarkPrices, UnsubscribeOptionChain, UnsubscribeOptionGreeks,
+            UnsubscribeQuotes, UnsubscribeTrades, is_parent_subscription,
         },
         system::{QueueStateChanged, ShutdownSystem, SocketStateChanged},
     },
@@ -467,6 +469,22 @@ pub trait DataActor {
     /// Returns an error if handling the instrument fails.
     #[allow(unused_variables)]
     fn on_instrument(&mut self, instrument: &InstrumentAny) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Actions to be performed when receiving a spread registration response.
+    ///
+    /// The response either carries the registered [`OptionSpread`] instrument
+    /// (`SpreadRegistrationOutcome::Ready`) or a descriptive rejection reason.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if handling the response fails.
+    #[allow(unused_variables)]
+    fn on_spread_registration_response(
+        &mut self,
+        resp: &SpreadRegistrationResponse,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -1348,6 +1366,15 @@ pub trait DataActor {
             if let Err(e) = self.on_instrument(inst) {
                 log_error(&e);
             }
+        }
+    }
+
+    /// Handles a spread registration response.
+    fn handle_spread_registration_response(&mut self, resp: &SpreadRegistrationResponse) {
+        log_received(&resp);
+
+        if let Err(e) = self.on_spread_registration_response(resp) {
+            log_error(&e);
         }
     }
 
@@ -2711,6 +2738,49 @@ pub trait DataActor {
             venue,
             start,
             end,
+            client_id,
+            params,
+            handler,
+        )
+    }
+
+    /// Requests registration of a generic option spread built from `legs`.
+    ///
+    /// Each leg is an `(instrument_id, ratio)` pair where the ratio is the
+    /// signed integer quantity of that leg per spread package. The correlated
+    /// [`SpreadRegistrationResponse`] is delivered to
+    /// [`DataActor::on_spread_registration_response`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input parameters are invalid.
+    fn request_spread(
+        &mut self,
+        legs: Vec<(InstrumentId, i64)>,
+        multiplier: Quantity,
+        client_id: Option<ClientId>,
+        params: Option<Params>,
+    ) -> anyhow::Result<UUID4>
+    where
+        Self: DataActorNative,
+        Self: 'static + Debug + Sized,
+    {
+        let actor_id = self.core().actor_id().inner();
+        let handler =
+            ShareableMessageHandler::from_typed(move |resp: &SpreadRegistrationResponse| {
+                if let Some(mut actor) = try_get_actor_unchecked::<Self>(&actor_id) {
+                    actor.handle_spread_registration_response(resp);
+                } else {
+                    log::error!(
+                        "Actor {actor_id} not found for spread registration response handling"
+                    );
+                }
+            });
+
+        DataActorCore::request_spread(
+            self.core_mut(),
+            legs,
+            multiplier,
             client_id,
             params,
             handler,
@@ -5532,6 +5602,45 @@ impl DataActorCore {
             client_id,
             request_id,
             ts_init: now.into(),
+            params,
+        });
+
+        get_message_bus()
+            .borrow_mut()
+            .register_response_handler(command.request_id(), handler)?;
+
+        self.send_data_cmd(DataCommand::Request(command));
+
+        Ok(request_id)
+    }
+
+    /// Requests registration of a generic option spread built from `legs`.
+    ///
+    /// Each leg is an `(instrument_id, ratio)` pair where the ratio is the
+    /// signed integer quantity of that leg per spread package. The correlated
+    /// [`SpreadRegistrationResponse`] is delivered to the registered handler
+    /// once the hosting engine has settled the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input parameters are invalid.
+    pub fn request_spread(
+        &self,
+        legs: Vec<(InstrumentId, i64)>,
+        multiplier: Quantity,
+        client_id: Option<ClientId>,
+        params: Option<Params>,
+        handler: ShareableMessageHandler,
+    ) -> anyhow::Result<UUID4> {
+        self.check_registered();
+
+        let request_id = UUID4::new();
+        let command = RequestCommand::Spread(RequestSpread {
+            legs,
+            multiplier,
+            client_id,
+            request_id,
+            ts_init: self.timestamp_ns(),
             params,
         });
 
