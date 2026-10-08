@@ -88,9 +88,9 @@ use nautilus_common::{
         BarsResponse, BookDeltasResponse, BookDepthResponse, CustomDataResponse, DataCommand,
         DataResponse, FundingRatesResponse, OptionChainReferencePriceResponse, PARAMS_IS_PARENT,
         QuotesResponse, RequestBars, RequestCommand, RequestJoin, RequestOptionChainReferencePrice,
-        RequestQuotes, RequestTrades, SubscribeBars, SubscribeBookDeltas, SubscribeBookDepth,
-        SubscribeCommand, SubscribeOptionChain, SubscribeOptionGreeks, SubscribeQuotes,
-        SubscribeTrades, TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas,
+        RequestQuotes, RequestSpread, RequestTrades, SubscribeBars, SubscribeBookDeltas,
+        SubscribeBookDepth, SubscribeCommand, SubscribeOptionChain, SubscribeOptionGreeks,
+        SubscribeQuotes, SubscribeTrades, TradesResponse, UnsubscribeBars, UnsubscribeBookDeltas,
         UnsubscribeBookDepth, UnsubscribeBookSnapshots, UnsubscribeCommand,
         UnsubscribeInstrumentStatus, UnsubscribeOptionChain, UnsubscribeOptionGreeks,
         UnsubscribeQuotes, UnsubscribeTrades, is_parent_subscription,
@@ -204,6 +204,7 @@ pub struct DataEngine {
     continuous_future_subscriptions: AHashMap<BarType, ContinuousFutureSubscriptionState>,
     continuous_future_roller: Option<Rc<ContinuousFutureRoller>>,
     spread_quote_states: AHashMap<InstrumentId, SpreadQuoteState>,
+    pending_spread_requests: VecDeque<RequestSpread>,
     option_chain_managers: AHashMap<OptionSeriesId, Rc<RefCell<OptionChainManager>>>,
     option_chain_instrument_index: AHashMap<InstrumentId, OptionSeriesId>,
     deferred_cmd_queue: DeferredCommandQueue,
@@ -281,6 +282,7 @@ impl DataEngine {
             continuous_future_subscriptions: AHashMap::new(),
             continuous_future_roller: None,
             spread_quote_states: AHashMap::new(),
+            pending_spread_requests: VecDeque::new(),
             option_chain_managers: AHashMap::new(),
             option_chain_instrument_index: AHashMap::new(),
             deferred_cmd_queue: Rc::new(RefCell::new(VecDeque::new())),
@@ -1049,6 +1051,27 @@ impl DataEngine {
         Ok(())
     }
 
+    /// Returns `true` if any [`RequestSpread`] is awaiting hosting-engine
+    /// settlement.
+    pub fn has_pending_spread_requests(&self) -> bool {
+        !self.pending_spread_requests.is_empty()
+    }
+
+    /// Takes every [`RequestSpread`] deferred to the hosting engine, in arrival
+    /// order.
+    ///
+    /// Spread registration needs the venue lifecycle the data engine does not
+    /// own (matching engines, expiration timers), so requests received here are
+    /// queued and the hosting backtest engine drains and settles them at its
+    /// next command-drain safe point before simulated time advances.
+    pub fn take_pending_spread_requests(&mut self) -> Vec<RequestSpread> {
+        self.pending_spread_requests.drain(..).collect()
+    }
+
+    /// Defers a spread registration request to the hosting engine.
+    fn execute_spread_request(&mut self, cmd: RequestSpread) {
+        self.pending_spread_requests.push_back(cmd);
+    }
     /// Sends a [`RequestCommand`] to a suitable data client implementation.
     ///
     /// # Errors
@@ -1063,6 +1086,11 @@ impl DataEngine {
             if self.config.debug {
                 log::debug!("Skipping data request for external client {cid}: {req:?}");
             }
+            return Ok(());
+        }
+
+        if let RequestCommand::Spread(cmd) = req {
+            self.execute_spread_request(cmd);
             return Ok(());
         }
 
@@ -1130,6 +1158,9 @@ impl DataEngine {
             RequestCommand::OptionChainReferencePrice(req) => client.request_option_chain_reference_price(req),
             RequestCommand::Bars(req) => client.request_bars(req),
             RequestCommand::Join(_) => anyhow::bail!("RequestJoin must be handled by handle_request_join"),
+            RequestCommand::Spread(_) => {
+                anyhow::bail!("RequestSpread must be handled by execute_spread_request")
+            }
         }?;
 
         Ok(resolved_client_id)
@@ -1388,6 +1419,7 @@ impl DataEngine {
                 return self.handle_option_chain_reference_price_response(&correlation_id, r);
             }
             DataResponse::Data(_) => {}
+            DataResponse::Spread(_) => {}
         }
 
         self.process_request_bar_aggregation_response(&resp);

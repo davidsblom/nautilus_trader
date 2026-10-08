@@ -39,7 +39,10 @@ use nautilus_execution::{
         OrderMatchingEngine, config::OrderMatchingEngineConfig, inflight::InflightOrders,
     },
     models::{
-        fee::{CappedOptionFeeModel, FeeModelAny, FixedFeeModel, MakerTakerFeeModel},
+        fee::{
+            CappedOptionFeeModel, FeeModelAny, FixedFeeModel, MakerTakerFeeModel,
+            PerContractFeeModel,
+        },
         fill::{BestPriceFillModel, DefaultFillModel, FillModel, FillModelAny, FillModelHandle},
     },
 };
@@ -61,12 +64,13 @@ use nautilus_model::{
         order::spec::{OrderEmulatedSpec, OrderFilledSpec, OrderRejectedSpec, OrderReleasedSpec},
     },
     identifiers::{
-        AccountId, ClientId, ClientOrderId, ExecAlgorithmId, InstrumentId, PositionId, StrategyId,
-        Symbol, TradeId, TraderId, VenueOrderId, stubs::account_id,
+        AccountId, ClientId, ClientOrderId, ExecAlgorithmId, GENERIC_SPREAD_ID_SEPARATOR,
+        InstrumentId, PositionId, StrategyId, Symbol, TradeId, TraderId, VenueOrderId,
+        stubs::account_id,
     },
     instruments::{
         CryptoOption, CryptoPerpetual, Equity, IndexInstrument, Instrument, InstrumentAny,
-        OptionContract,
+        OptionContract, OptionSpread,
         stubs::{binary_option, crypto_perpetual_ethusdt, equity_aapl, futures_contract_es},
     },
     orderbook::OrderBook,
@@ -15371,6 +15375,71 @@ fn option_contract(
         .unwrap()
 }
 
+fn option_contract_with_strike(
+    underlying: &str,
+    venue: &str,
+    expiration_ns: UnixNanos,
+    kind: OptionKind,
+    strike: &str,
+) -> OptionContract {
+    let strike_price = Price::from(strike);
+    // OCC-style strike code: whole points scaled by 1_000, zero padded to 8 digits
+    let strike_code: u64 = strike
+        .split('.')
+        .map(|part| part.parse::<u64>().expect("valid strike part"))
+        .reduce(|whole, fraction| whole * 1000 + fraction * 10)
+        .expect("strike with whole and fraction parts");
+    let symbol = match kind {
+        OptionKind::Call => format!("{underlying}211217C{strike_code:08}"),
+        OptionKind::Put => format!("{underlying}211217P{strike_code:08}"),
+    };
+    OptionContract::builder()
+        .instrument_id(InstrumentId::from(format!("{symbol}.{venue}").as_str()))
+        .raw_symbol(Symbol::from(symbol.as_str()))
+        .asset_class(AssetClass::Equity)
+        .exchange(Ustr::from(venue))
+        .underlying(Ustr::from(underlying))
+        .option_kind(kind)
+        .strike_price(strike_price)
+        .currency(Currency::USD())
+        .activation_ns(UnixNanos::from(0))
+        .expiration_ns(expiration_ns)
+        .price_precision(2)
+        .price_increment(Price::from("0.01"))
+        .multiplier(Quantity::from(1))
+        .lot_size(Quantity::from(1))
+        .ts_event(UnixNanos::default())
+        .ts_init(UnixNanos::default())
+        .build()
+        .unwrap()
+}
+
+fn option_spread_instrument(
+    leg_components: &[String],
+    venue: &str,
+    expiration_ns: UnixNanos,
+) -> OptionSpread {
+    let symbol = leg_components.join(GENERIC_SPREAD_ID_SEPARATOR);
+    OptionSpread::builder()
+        .instrument_id(InstrumentId::from(format!("{symbol}.{venue}").as_str()))
+        .raw_symbol(Symbol::from(symbol.as_str()))
+        .asset_class(AssetClass::Equity)
+        .exchange(Ustr::from(venue))
+        .underlying(Ustr::from("SPX"))
+        .strategy_type(Ustr::from("IC"))
+        .activation_ns(UnixNanos::from(0))
+        .expiration_ns(expiration_ns)
+        .currency(Currency::USD())
+        .price_precision(2)
+        .price_increment(Price::from("0.05"))
+        .multiplier(Quantity::from(1))
+        .lot_size(Quantity::from(1))
+        .ts_event(UnixNanos::default())
+        .ts_init(UnixNanos::default())
+        .build()
+        .unwrap()
+}
+
 fn crypto_option_call_btc(venue: &str, expiration_ns: UnixNanos, strike: Price) -> CryptoOption {
     CryptoOption::builder()
         .instrument_id(InstrumentId::from(format!("BTC-OPT-CALL.{venue}").as_str()))
@@ -15727,6 +15796,858 @@ fn test_option_cash_settlement_at_intrinsic_value(
     assert_eq!(settlement_fill.last_px, Price::from("11.00"));
     assert_eq!(settlement_fill.position_id, Some(position.id));
     assert!(engine.is_expiration_processed());
+}
+
+#[rstest]
+fn test_expired_spread_without_package_fills_completes_without_settlement() {
+    let cache = Rc::new(RefCell::new(Cache::default()));
+    let order_event_handler = order_event_handler_with_cache(cache.clone());
+
+    let venue = "OPRA";
+    let expiration_ns = UnixNanos::from(2_000_000_000_000_000_000u64);
+    let call = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Call, "149.00");
+    let put = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Put, "170.00");
+    let spread = option_spread_instrument(
+        &[
+            format!("(1){}", call.id().symbol),
+            format!("((1)){}", put.id().symbol),
+        ],
+        venue,
+        expiration_ns,
+    );
+
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(call))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(put))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionSpread(spread.clone()))
+        .unwrap();
+
+    // An untraded resting order is the only spread activity: no package fills
+    // exist, so there is nothing to reconcile and no synthetic settlement fill
+    // is booked for the spread
+    let order = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(1))
+        .price(Price::from("0.50"))
+        .client_order_id(ClientOrderId::from("SPRD-REST-001"))
+        .submit(true)
+        .build();
+    cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
+    clock.borrow_mut().set_time(expiration_ns);
+
+    let mut engine = OrderMatchingEngine::new(
+        InstrumentAny::OptionSpread(spread),
+        1,
+        FillModelHandle::default(),
+        FeeModelAny::MakerTaker(MakerTakerFeeModel::zero()).into(),
+        BookType::L1_MBP,
+        OmsType::Netting,
+        AccountType::Cash,
+        clock,
+        cache,
+        OrderMatchingEngineConfig::default(),
+    );
+
+    engine.iterate(expiration_ns, AggressorSide::NoAggressor);
+
+    assert!(engine.is_expiration_processed());
+    let events = get_order_event_handler_messages(&order_event_handler);
+    assert_eq!(events.len(), 1, "{events:?}");
+    let OrderEventAny::Canceled(canceled) = &events[0] else {
+        panic!("Expected the resting order cancellation, received {events:?}");
+    };
+    assert_eq!(canceled.client_order_id, order.client_order_id());
+}
+
+#[rstest]
+fn test_expired_spread_with_package_fills_reconciles_component_accounting(account_id: AccountId) {
+    let mut harness = spread_package_harness(Quantity::from(10));
+    let expiration_ns = UnixNanos::from(2_000_000_000_000_000_000u64);
+
+    // Fill one package; the package fill itself books no position
+    let mut order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(1))
+        .client_order_id(ClientOrderId::from("PKG-RECON-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let components = component_fill_events(&harness);
+    assert_eq!(components.len(), 2, "expected both legs: {components:?}");
+
+    // The exec engine applies component fills as ordinary leg positions; seed
+    // the cache with the component accounting the reconciliation expects
+    let call =
+        option_contract_with_strike("SPX", "OPRA", expiration_ns, OptionKind::Call, "149.00");
+    let put = option_contract_with_strike("SPX", "OPRA", expiration_ns, OptionKind::Put, "170.00");
+    let seeds = [
+        (InstrumentAny::OptionContract(call), &components[0]),
+        (InstrumentAny::OptionContract(put), &components[1]),
+    ];
+    for (index, (instrument, component)) in seeds.iter().enumerate() {
+        open_long_option_position_with_ids(
+            &harness.cache,
+            instrument,
+            account_id,
+            component.last_qty,
+            component.last_px,
+            component.client_order_id,
+            component.venue_order_id,
+            PositionId::from(format!("P-RECON-{index}").as_str()),
+            component.trade_id,
+        );
+    }
+
+    harness
+        .engine
+        .iterate(expiration_ns, AggressorSide::NoAggressor);
+
+    assert!(harness.engine.is_expiration_processed());
+    // Legs settle through their own option expirations; the spread engine
+    // books no synthetic settlement fill
+    assert_eq!(
+        get_order_event_handler_messages(&harness.order_event_handler).len(),
+        3,
+        "expected no settlement events beyond the component and package fills"
+    );
+}
+
+#[rstest]
+fn test_package_fill_charges_legged_equivalent_commission_with_leg_details(account_id: AccountId) {
+    let cache = Rc::new(RefCell::new(Cache::default()));
+    let order_event_handler = order_event_handler_with_cache(cache.clone());
+
+    let venue = "OPRA";
+    let expiration_ns = UnixNanos::from(2_000_000_000_000_000_000u64);
+    let call = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Call, "149.00");
+    let put = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Put, "170.00");
+    let spread = option_spread_instrument(
+        &[
+            format!("(1){}", call.id().symbol),
+            format!("((1)){}", put.id().symbol),
+        ],
+        venue,
+        expiration_ns,
+    );
+
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(call.clone()))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(put.clone()))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionSpread(spread.clone()))
+        .unwrap();
+
+    // Leg observations feed component accounting; the spread book quote is
+    // the package price authority
+    cache
+        .borrow_mut()
+        .add_quote(QuoteTick::new(
+            call.id(),
+            Price::from("10.90"),
+            Price::from("11.10"),
+            Quantity::from(10),
+            Quantity::from(10),
+            UnixNanos::from(1),
+            UnixNanos::from(1),
+        ))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_quote(QuoteTick::new(
+            put.id(),
+            Price::from("9.90"),
+            Price::from("10.10"),
+            Quantity::from(10),
+            Quantity::from(10),
+            UnixNanos::from(1),
+            UnixNanos::from(1),
+        ))
+        .unwrap();
+
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
+    clock.borrow_mut().set_time(UnixNanos::from(2));
+
+    let mut engine = OrderMatchingEngine::new(
+        InstrumentAny::OptionSpread(spread.clone()),
+        1,
+        FillModelHandle::default(),
+        FeeModelAny::PerContract(
+            PerContractFeeModel::new(Money::new(1.0, Currency::USD())).unwrap(),
+        )
+        .into(),
+        BookType::L1_MBP,
+        OmsType::Netting,
+        AccountType::Cash,
+        clock,
+        Rc::clone(&cache),
+        OrderMatchingEngineConfig::default(),
+    );
+
+    engine.process_quote_tick(&QuoteTick::new(
+        spread.id(),
+        Price::from("1.05"),
+        Price::from("1.10"),
+        Quantity::from(10),
+        Quantity::from(10),
+        UnixNanos::from(2),
+        UnixNanos::from(2),
+    ));
+
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(2))
+        .price(Price::from("1.25"))
+        .client_order_id(ClientOrderId::from("PKG-001"))
+        .submit(true)
+        .build();
+    cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    engine.process_order(&mut order, account_id);
+
+    let events = get_order_event_handler_messages(&order_event_handler);
+    let fills: Vec<OrderFilled> = package_fill_events_from(events.clone());
+    assert_eq!(
+        fills.len(),
+        1,
+        "expected exactly one package fill: {events:?}"
+    );
+    let fill = &fills[0];
+
+    // The spread book quote prices the package at the executable ask, rounded
+    // to the package increment.
+    assert_eq!(fill.instrument_id, spread.id());
+    assert_eq!(fill.last_px, Price::from("1.10"));
+    assert_eq!(fill.last_qty, Quantity::from(2));
+    // Per contract 1.00 USD x 2 packages x (|+1| + |-1|) legs = 4.00 USD
+    assert_eq!(fill.commission, Some(Money::new(4.0, Currency::USD())));
+
+    let info = fill.info.as_ref().expect("Expected package fill info");
+    assert_eq!(
+        info.get(&Ustr::from("package_leg_count")),
+        Some(&Ustr::from("2"))
+    );
+    assert_eq!(
+        info.get(&Ustr::from("leg_0_id")),
+        Some(&Ustr::from(call.id().to_string().as_str()))
+    );
+    assert_eq!(
+        info.get(&Ustr::from("leg_0_side")),
+        Some(&Ustr::from("BUY"))
+    );
+    assert_eq!(info.get(&Ustr::from("leg_0_qty")), Some(&Ustr::from("2")));
+    assert_eq!(
+        info.get(&Ustr::from("leg_0_px")),
+        Some(&Ustr::from("11.10"))
+    );
+    assert_eq!(
+        info.get(&Ustr::from("leg_0_fee")),
+        Some(&Ustr::from("2.00"))
+    );
+    assert_eq!(
+        info.get(&Ustr::from("leg_1_id")),
+        Some(&Ustr::from(put.id().to_string().as_str()))
+    );
+    assert_eq!(
+        info.get(&Ustr::from("leg_1_side")),
+        Some(&Ustr::from("SELL"))
+    );
+    assert_eq!(info.get(&Ustr::from("leg_1_qty")), Some(&Ustr::from("2")));
+    assert_eq!(info.get(&Ustr::from("leg_1_px")), Some(&Ustr::from("9.90")));
+    assert_eq!(
+        info.get(&Ustr::from("leg_1_fee")),
+        Some(&Ustr::from("2.00"))
+    );
+
+    // Component accounting fills are emitted before the package fill and
+    // carry the legged quantities, prices, and per-leg fees; the package
+    // fill itself is order-management-only.
+    let components = component_fill_events_from(
+        get_order_event_handler_messages(&order_event_handler),
+        &spread.id(),
+    );
+    assert_eq!(components.len(), 2, "expected both legs: {components:?}");
+    let pkg_trade_id = &fills[0].trade_id;
+    let expected = [
+        (
+            call.id(),
+            OrderSide::Buy,
+            Quantity::from(2),
+            Price::from("11.10"),
+            Money::new(2.0, Currency::USD()),
+            ClientOrderId::from("PKG-001-LEG-0"),
+        ),
+        (
+            put.id(),
+            OrderSide::Sell,
+            Quantity::from(2),
+            Price::from("9.90"),
+            Money::new(2.0, Currency::USD()),
+            ClientOrderId::from("PKG-001-LEG-1"),
+        ),
+    ];
+    for (index, (instrument_id, side, qty, px, commission, client_order_id)) in
+        expected.iter().enumerate()
+    {
+        let component = &components[index];
+        assert_eq!(&component.instrument_id, instrument_id);
+        assert_eq!(&component.order_side, side);
+        assert_eq!(&component.last_qty, qty);
+        assert_eq!(&component.last_px, px);
+        assert_eq!(&component.commission, &Some(*commission));
+        assert_eq!(&component.client_order_id, client_order_id);
+        assert_eq!(
+            &component.trade_id,
+            &TradeId::from(format!("{pkg_trade_id}-LEG-{index}").as_str())
+        );
+        assert_eq!(component.position_id, None);
+        assert_eq!(
+            component
+                .info
+                .as_ref()
+                .and_then(|info| info.get(&Ustr::from("package_client_order_id"))),
+            Some(&Ustr::from("PKG-001"))
+        );
+    }
+}
+
+/// Spread package harness: call 149 C and put 170 P legs observed in the cache
+/// at 10.90/11.10 and 9.90/10.10, with the spread book quoting
+/// `package_capacity` whole packages at 1.05/1.10.
+struct SpreadPackageHarness {
+    cache: Rc<RefCell<Cache>>,
+    order_event_handler: TypedIntoMessageSavingHandler<OrderEventAny>,
+    engine: OrderMatchingEngine,
+    spread: OptionSpread,
+    call: OptionContract,
+    put: OptionContract,
+    clock: Rc<RefCell<VirtualClock>>,
+}
+
+fn spread_package_harness(package_capacity: Quantity) -> SpreadPackageHarness {
+    let cache = Rc::new(RefCell::new(Cache::default()));
+    let order_event_handler = order_event_handler_with_cache(cache.clone());
+
+    let venue = "OPRA";
+    let expiration_ns = UnixNanos::from(2_000_000_000_000_000_000u64);
+    let call = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Call, "149.00");
+    let put = option_contract_with_strike("SPX", venue, expiration_ns, OptionKind::Put, "170.00");
+    let spread = option_spread_instrument(
+        &[
+            format!("(1){}", call.id().symbol),
+            format!("((1)){}", put.id().symbol),
+        ],
+        venue,
+        expiration_ns,
+    );
+
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(call.clone()))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionContract(put.clone()))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_instrument(InstrumentAny::OptionSpread(spread.clone()))
+        .unwrap();
+
+    cache
+        .borrow_mut()
+        .add_quote(QuoteTick::new(
+            call.id(),
+            Price::from("10.90"),
+            Price::from("11.10"),
+            Quantity::from(10),
+            Quantity::from(10),
+            UnixNanos::from(1),
+            UnixNanos::from(1),
+        ))
+        .unwrap();
+    cache
+        .borrow_mut()
+        .add_quote(QuoteTick::new(
+            put.id(),
+            Price::from("9.90"),
+            Price::from("10.10"),
+            Quantity::from(10),
+            Quantity::from(10),
+            UnixNanos::from(1),
+            UnixNanos::from(1),
+        ))
+        .unwrap();
+
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
+    clock.borrow_mut().set_time(UnixNanos::from(2));
+
+    let mut engine = OrderMatchingEngine::new(
+        InstrumentAny::OptionSpread(spread.clone()),
+        1,
+        FillModelHandle::default(),
+        FeeModelAny::PerContract(
+            PerContractFeeModel::new(Money::new(1.0, Currency::USD())).unwrap(),
+        )
+        .into(),
+        BookType::L1_MBP,
+        OmsType::Netting,
+        AccountType::Cash,
+        clock.clone(),
+        Rc::clone(&cache),
+        OrderMatchingEngineConfig::default(),
+    );
+
+    engine.process_quote_tick(&QuoteTick::new(
+        spread.id(),
+        Price::from("1.05"),
+        Price::from("1.10"),
+        package_capacity,
+        package_capacity,
+        UnixNanos::from(2),
+        UnixNanos::from(2),
+    ));
+
+    SpreadPackageHarness {
+        cache,
+        order_event_handler,
+        engine,
+        spread,
+        call,
+        put,
+        clock,
+    }
+}
+
+fn package_fill_events_from(events: Vec<OrderEventAny>) -> Vec<OrderFilled> {
+    events
+        .into_iter()
+        .filter_map(|e| match e {
+            OrderEventAny::Filled(f)
+                if f.info
+                    .as_ref()
+                    .is_some_and(|info| info.contains_key(&Ustr::from("package_leg_count"))) =>
+            {
+                Some(f)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn component_fill_events_from(
+    events: Vec<OrderEventAny>,
+    spread_id: &InstrumentId,
+) -> Vec<OrderFilled> {
+    events
+        .into_iter()
+        .filter_map(|e| match e {
+            OrderEventAny::Filled(f) => {
+                let is_package = f
+                    .info
+                    .as_ref()
+                    .is_some_and(|info| info.contains_key(&Ustr::from("package_leg_count")));
+                let is_spread = &f.instrument_id == spread_id;
+                (!is_package && !is_spread).then_some(f)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn package_fill_events(harness: &SpreadPackageHarness) -> Vec<OrderFilled> {
+    package_fill_events_from(get_order_event_handler_messages(
+        &harness.order_event_handler,
+    ))
+}
+
+fn component_fill_events(harness: &SpreadPackageHarness) -> Vec<OrderFilled> {
+    component_fill_events_from(
+        get_order_event_handler_messages(&harness.order_event_handler),
+        &harness.spread.id(),
+    )
+}
+
+#[rstest]
+fn test_package_market_order_fills_available_whole_spreads_with_derived_net_price(
+    account_id: AccountId,
+) {
+    let mut harness = spread_package_harness(Quantity::from(10));
+
+    let mut order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .client_order_id(ClientOrderId::from("PKG-MKT-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let fills = package_fill_events(&harness);
+    assert_eq!(
+        fills.len(),
+        1,
+        "expected exactly one package fill: {events:?}",
+        events = get_order_event_handler_messages(&harness.order_event_handler)
+    );
+    let fill = &fills[0];
+
+    // The spread book prices the package at the executable ask (1.10) and
+    // fills the whole order
+    assert_eq!(fill.last_px, Price::from("1.10"));
+    assert_eq!(fill.last_qty, Quantity::from(3));
+    assert_eq!(
+        fill.info
+            .as_ref()
+            .and_then(|info| info.get(&Ustr::from("package_leg_count"))),
+        Some(&Ustr::from("2"))
+    );
+    // Per contract 1.00 USD x 3 packages x 2 legs = 6.00 USD
+    assert_eq!(fill.commission, Some(Money::new(6.0, Currency::USD())));
+
+    // Component accounting fills cover both legs at the observed leg prices
+    // with the full package quantity
+    let components = component_fill_events(&harness);
+    assert_eq!(components.len(), 2, "expected both legs: {components:?}");
+    for component in &components {
+        assert_ne!(component.instrument_id, harness.spread.id());
+        assert_eq!(component.last_qty, Quantity::from(3));
+        assert_eq!(component.position_id, None);
+    }
+    let (buy, sell) = match (components[0].order_side, components[1].order_side) {
+        (OrderSide::Buy, OrderSide::Sell) => (&components[0], &components[1]),
+        (OrderSide::Sell, OrderSide::Buy) => (&components[1], &components[0]),
+        _ => panic!("Expected one buy and one sell leg: {components:?}"),
+    };
+    assert_eq!(buy.last_px, Price::from("11.10"));
+    assert_eq!(sell.last_px, Price::from("9.90"));
+}
+
+#[rstest]
+fn test_package_market_order_cancels_unfillable_remainder_without_resting(account_id: AccountId) {
+    let mut harness = spread_package_harness(Quantity::from(2));
+
+    let mut order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .client_order_id(ClientOrderId::from("PKG-MKT-REM-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let events = get_order_event_handler_messages(&harness.order_event_handler);
+    let fills = package_fill_events(&harness);
+    assert_eq!(
+        fills.len(),
+        1,
+        "expected exactly one package fill: {events:?}"
+    );
+    assert_eq!(fills[0].last_px, Price::from("1.10"));
+    assert_eq!(fills[0].last_qty, Quantity::from(2));
+
+    // The spread book's two whole packages are filled and the remaining
+    // single package is canceled rather than slipped to a price the component
+    // observations never priced or rested on the book
+    let canceled = events
+        .iter()
+        .filter_map(|e| match e {
+            OrderEventAny::Canceled(c) => Some(*c),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(canceled.len(), 1, "expected a cancellation: {events:?}");
+    assert_eq!(canceled[0].client_order_id, order.client_order_id());
+}
+
+#[rstest]
+fn test_package_limit_partial_fill_averages_confirmed_net_prices(account_id: AccountId) {
+    let mut harness = spread_package_harness(Quantity::from(2));
+
+    // Only two whole packages sit on the spread book, so the limit order
+    // fills partially and the remainder rests on the book
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .price(Price::from("1.30"))
+        .client_order_id(ClientOrderId::from("PKG-LMT-WTD-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let fills = package_fill_events(&harness);
+    assert_eq!(
+        fills.len(),
+        1,
+        "expected one partial package fill: {fills:?}"
+    );
+    assert_eq!(fills[0].last_px, Price::from("1.10"));
+    assert_eq!(fills[0].last_qty, Quantity::from(2));
+
+    // Refresh both leg quotes with a strictly later observation so the resting
+    // remainder fills at the new book ask (1.30) with components at the
+    // refreshed leg prices (11.10 ask - 9.80 bid)
+    harness.clock.borrow_mut().set_time(UnixNanos::from(4));
+    let refresh = |harness: &SpreadPackageHarness, id, bid: &str, ask: &str| {
+        harness
+            .cache
+            .borrow_mut()
+            .add_quote(QuoteTick::new(
+                id,
+                Price::from(bid),
+                Price::from(ask),
+                Quantity::from(10),
+                Quantity::from(10),
+                UnixNanos::from(3),
+                UnixNanos::from(3),
+            ))
+            .unwrap();
+    };
+    refresh(&harness, harness.call.id(), "10.90", "11.10");
+    refresh(&harness, harness.put.id(), "9.80", "10.00");
+    harness.engine.process_quote_tick(&QuoteTick::new(
+        harness.spread.id(),
+        Price::from("1.20"),
+        Price::from("1.30"),
+        Quantity::from(10),
+        Quantity::from(10),
+        UnixNanos::from(4),
+        UnixNanos::from(4),
+    ));
+
+    let fills = package_fill_events(&harness);
+    assert_eq!(fills.len(), 2, "expected the remainder to fill: {fills:?}");
+    assert_eq!(fills[1].last_px, Price::from("1.30"));
+    assert_eq!(fills[1].last_qty, Quantity::from(1));
+
+    // Component accounting covers both fill rounds at the leg prices each
+    // round actually consumed
+    let components = component_fill_events(&harness);
+    assert_eq!(
+        components.len(),
+        4,
+        "expected both legs per round: {components:?}"
+    );
+    let mut round_one = components
+        .iter()
+        .filter(|fill| fill.last_qty == Quantity::from(2))
+        .collect::<Vec<_>>();
+    round_one.sort_by_key(|fill| fill.instrument_id);
+    let mut round_two = components
+        .iter()
+        .filter(|fill| fill.last_qty == Quantity::from(1))
+        .collect::<Vec<_>>();
+    round_two.sort_by_key(|fill| fill.instrument_id);
+    assert_eq!(round_one.len(), 2);
+    assert_eq!(round_two.len(), 2);
+    assert_eq!(round_one[0].last_px, Price::from("11.10"));
+    assert_eq!(round_one[0].order_side, OrderSide::Buy);
+    assert_eq!(round_one[1].last_px, Price::from("9.90"));
+    assert_eq!(round_one[1].order_side, OrderSide::Sell);
+    assert_eq!(round_two[0].last_px, Price::from("11.10"));
+    assert_eq!(round_two[0].order_side, OrderSide::Buy);
+    assert_eq!(round_two[1].last_px, Price::from("9.80"));
+    assert_eq!(round_two[1].order_side, OrderSide::Sell);
+
+    // The order's average price is the quantity-weighted mean of the confirmed
+    // net prices, not the latest fill price
+    let cached = harness.cache.borrow();
+    let cached = cached.order(&order.client_order_id()).unwrap();
+    assert_eq!(cached.status(), OrderStatus::Filled);
+    assert_eq!(cached.filled_qty(), Quantity::from(3));
+    assert_eq!(
+        cached.avg_px(),
+        Some(dec!(1.1666666666666666666666666667)),
+        "(2 * 1.10 + 1 * 1.30) / 3"
+    );
+}
+
+#[rstest]
+fn test_unsupported_package_market_family_order_is_denied_without_consuming_capacity(
+    account_id: AccountId,
+) {
+    let mut harness = spread_package_harness(Quantity::from(10));
+
+    let mut order = OrderTestBuilder::new(OrderType::MarketToLimit)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .client_order_id(ClientOrderId::from("PKG-MTL-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let events = get_order_event_handler_messages(&harness.order_event_handler);
+    assert_eq!(events.len(), 1, "expected only a rejection: {events:?}");
+    let OrderEventAny::Rejected(rejected) = &events[0] else {
+        panic!("Expected a rejection, received {events:?}");
+    };
+    assert_eq!(rejected.client_order_id, order.client_order_id());
+    assert_eq!(
+        rejected.reason,
+        Ustr::from(
+            format!(
+                "Unsupported package order type MARKET_TO_LIMIT for spread instrument {}",
+                harness.spread.id()
+            )
+            .as_str()
+        )
+    );
+
+    // The denied order left the spread book untouched: a follow-up market
+    // order still fills three whole packages at the book ask
+    let mut fill_order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .client_order_id(ClientOrderId::from("PKG-MTL-002"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(fill_order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut fill_order, account_id);
+
+    let fills = package_fill_events(&harness);
+    assert_eq!(fills.len(), 1, "expected the follow-up fill: {fills:?}");
+    assert_eq!(fills[0].last_px, Price::from("1.10"));
+    assert_eq!(fills[0].last_qty, Quantity::from(3));
+}
+
+#[rstest]
+fn test_unfillable_package_fok_cancels_without_partial_fill(account_id: AccountId) {
+    let mut harness = spread_package_harness(Quantity::from(1));
+
+    // One whole package on the spread book cannot satisfy a three-package FOK
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(3))
+        .price(Price::from("1.25"))
+        .time_in_force(TimeInForce::Fok)
+        .client_order_id(ClientOrderId::from("PKG-FOK-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let events = get_order_event_handler_messages(&harness.order_event_handler);
+    assert_eq!(
+        events.len(),
+        2,
+        "expected acceptance and cancellation: {events:?}"
+    );
+    assert!(
+        matches!(&events[1], OrderEventAny::Canceled(_)),
+        "{events:?}"
+    );
+
+    // The failed FOK consumed nothing: a one-package FOK fills fully
+    let mut order = OrderTestBuilder::new(OrderType::Limit)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(1))
+        .price(Price::from("1.25"))
+        .time_in_force(TimeInForce::Fok)
+        .client_order_id(ClientOrderId::from("PKG-FOK-002"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+
+    let fills = package_fill_events(&harness);
+    assert_eq!(fills.len(), 1, "expected the follow-up fill: {fills:?}");
+    assert_eq!(fills[0].last_px, Price::from("1.10"));
+    assert_eq!(fills[0].last_qty, Quantity::from(1));
+}
+
+#[rstest]
+fn test_expired_spread_with_fills_but_no_leg_positions_completes(account_id: AccountId) {
+    let mut harness = spread_package_harness(Quantity::from(10));
+    let expiration_ns = UnixNanos::from(2_000_000_000_000_000_000u64);
+
+    let mut order = OrderTestBuilder::new(OrderType::Market)
+        .instrument_id(harness.spread.id())
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(1))
+        .client_order_id(ClientOrderId::from("PKG-EXPIRY-001"))
+        .submit(true)
+        .build();
+    harness
+        .cache
+        .borrow_mut()
+        .add_order(order.clone(), None, None, false)
+        .unwrap();
+    harness.engine.process_order(&mut order, account_id);
+    assert_eq!(package_fill_events(&harness).len(), 1);
+
+    // Package fills happened but the cache holds no leg positions: the spread
+    // engine books nothing and does not police component accounting, so its
+    // expiration still completes; legs settle through their own engines
+    harness
+        .engine
+        .iterate(expiration_ns, AggressorSide::NoAggressor);
+
+    assert!(harness.engine.is_expiration_processed());
 }
 
 #[rstest]

@@ -961,6 +961,61 @@ fn test_fill_after_settlement_updates_order_without_position_change(#[case] stra
 }
 
 #[rstest]
+fn test_duplicate_leg_fill_delivery_is_ignored() {
+    let (engine, instrument) = binary_settlement_engine(false);
+    let strategy_id = StrategyId::from("S-001");
+    let client_order_id = ClientOrderId::from("PKG-001-LEG-0");
+    let trade_id = TradeId::from("T-001-LEG-0");
+
+    let fill = build_order_filled(
+        TraderId::test_default(),
+        strategy_id,
+        instrument.id(),
+        client_order_id,
+        VenueOrderId::from("PKG-001-LEG-0"),
+        AccountId::test_default(),
+        trade_id,
+        OrderSide::Buy,
+        OrderType::Market,
+        Quantity::from(1),
+        Price::from("10.00"),
+        instrument.quote_currency(),
+        LiquiditySide::Taker,
+        None,
+        None,
+    );
+    let (received, _handler) = capture_position_events();
+
+    // First delivery opens the component position
+    engine
+        .borrow_mut()
+        .process(&OrderEventAny::Filled(fill.clone()));
+
+    let position = netting_position(&engine, &instrument, "S-001").unwrap();
+    assert_eq!(position.quantity, Quantity::from(1));
+    assert_eq!(position.buy_qty, Quantity::from(1));
+    assert_eq!(position.sell_qty, Quantity::from(0));
+    assert!(position.trade_ids.contains(&trade_id));
+    assert_eq!(position.trade_ids.len(), 1);
+    let events_after_first_delivery = received.borrow().len();
+    assert!(events_after_first_delivery > 0);
+
+    // Re-delivering the identical component fill must not double-apply it
+    engine.borrow_mut().process(&OrderEventAny::Filled(fill));
+
+    let position = netting_position(&engine, &instrument, "S-001").unwrap();
+    assert_eq!(position.quantity, Quantity::from(1));
+    assert_eq!(position.buy_qty, Quantity::from(1));
+    assert_eq!(position.sell_qty, Quantity::from(0));
+    assert!(position.trade_ids.contains(&trade_id));
+    assert_eq!(position.trade_ids.len(), 1);
+    assert_eq!(received.borrow().len(), events_after_first_delivery);
+    let engine = engine.borrow();
+    let cache = engine.cache().borrow();
+    assert_eq!(cache.positions(None, None, None, None, None).len(), 1);
+}
+
+#[rstest]
 fn test_reduce_only_fill_after_external_position_settlement_updates_order() {
     let (engine, instrument) = binary_settlement_engine(true);
     let account_id = AccountId::test_default();

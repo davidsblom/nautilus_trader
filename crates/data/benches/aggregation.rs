@@ -129,6 +129,7 @@ fn build_option_spread() -> SpreadQuoteAggregator {
         false,
         2,
         0,
+        Price::from("0.01"),
         Box::new(|quote| {
             black_box(quote);
         }),
@@ -139,6 +140,7 @@ fn build_option_spread() -> SpreadQuoteAggregator {
         false,
         10,
         Some(Box::new(vega_provider)),
+        None,
         None,
     );
     aggregator.handle_quote_tick(quote_tick(leg1, UnixNanos::from(0)));

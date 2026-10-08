@@ -104,6 +104,7 @@ impl DataEngine {
             ),
             instrument.price_precision(),
             instrument.size_precision(),
+            instrument.price_increment(),
             handler,
             self.clock.clone(),
             false,
@@ -122,6 +123,9 @@ impl DataEngine {
                 .unwrap_or(60),
             None,
             None,
+            cmd.params
+                .as_ref()
+                .and_then(|params| params.get_u64("max_quote_age_ns")),
         )));
 
         let mut handlers = Vec::with_capacity(legs.len());

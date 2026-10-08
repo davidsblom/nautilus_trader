@@ -407,6 +407,7 @@ pub(super) fn parent_request_window(
         RequestCommand::BookSnapshot(_) | RequestCommand::OptionChainReferencePrice(_) => {
             return (None, None);
         }
+        RequestCommand::Spread(_) => return (None, None),
     };
 
     (
@@ -508,6 +509,7 @@ pub(super) fn rebind_response_correlation(mut resp: DataResponse, new_id: UUID4)
         DataResponse::FundingRates(r) => r.correlation_id = new_id,
         DataResponse::OptionChainReferencePrice(r) => r.correlation_id = new_id,
         DataResponse::Bars(r) => r.correlation_id = new_id,
+        DataResponse::Spread(r) => r.correlation_id = new_id,
     }
 
     resp

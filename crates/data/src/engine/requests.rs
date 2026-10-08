@@ -250,6 +250,7 @@ pub(super) fn request_params(req: &RequestCommand) -> Option<&Params> {
         RequestCommand::OptionChainReferencePrice(cmd) => cmd.params.as_ref(),
         RequestCommand::Bars(cmd) => cmd.params.as_ref(),
         RequestCommand::Join(cmd) => cmd.params.as_ref(),
+        RequestCommand::Spread(cmd) => cmd.params.as_ref(),
     }
 }
 
@@ -266,6 +267,7 @@ pub(super) fn response_params(resp: &DataResponse) -> Option<&Params> {
         DataResponse::FundingRates(resp) => resp.params.as_ref(),
         DataResponse::OptionChainReferencePrice(resp) => resp.params.as_ref(),
         DataResponse::Bars(resp) => resp.params.as_ref(),
+        DataResponse::Spread(resp) => resp.params.as_ref(),
     }
 }
 
